@@ -73,7 +73,8 @@ public:
   virtual bool GetPicture(AVCodecContext* avctx, AVFrame* frame, DVDVideoPicture* picture);
   virtual void Reset();
   virtual void Close();
-  virtual void NormalSpeed(bool normal);
+  virtual bool AllowFrameDropping();
+  virtual void SetDropState(bool bDrop);
 
   virtual int  Check(AVCodecContext* avctx) 
   { 
@@ -301,9 +302,13 @@ protected:
   CCriticalSection m_mixerSec, m_outPicSec, m_videoSurfaceSec, m_flipSec;
   CEvent m_picSignal;
   CEvent m_msgSignal;
+  bool m_bVdpauDeinterlacing;
+  bool m_bNormalSpeed;
+  int m_dropCount;
   bool hasVdpauGlInterop;
   volatile bool glInteropFinish;
   bool m_bsurfaceMapped;
+  bool m_dropState;
 
   enum VDPAUOutputMethod
   {

@@ -960,6 +960,7 @@ bool CVDPAU::ConfigVDPAU(AVCodecContext* avctx, int ref_frames)
   m_vdpauOutputMethod = OUTPUT_NONE;
 
   vdpauConfigured = true;
+  m_bNormalSpeed = true;
   return true;
 }
 
@@ -971,20 +972,20 @@ bool CVDPAU::ConfigOutputMethod(AVCodecContext *avctx, AVFrame *pFrame)
     return true;
 
   // check if one of the vdpau interlacing methods are chosen
-  bool vdpauDeinterlace = false;
+  m_bVdpauDeinterlacing = false;
   EINTERLACEMETHOD method = g_settings.m_currentVideoSettings.m_InterlaceMethod;
-   if((method == VS_INTERLACEMETHOD_AUTO && pFrame->interlaced_frame)
+  if((method == VS_INTERLACEMETHOD_AUTO && pFrame->interlaced_frame)
      ||  method == VS_INTERLACEMETHOD_VDPAU_BOB
      ||  method == VS_INTERLACEMETHOD_VDPAU_TEMPORAL
      ||  method == VS_INTERLACEMETHOD_VDPAU_TEMPORAL_HALF
      ||  method == VS_INTERLACEMETHOD_VDPAU_TEMPORAL_SPATIAL
      ||  method == VS_INTERLACEMETHOD_VDPAU_TEMPORAL_SPATIAL_HALF
-     ||  method == VS_INTERLACEMETHOD_VDPAU_INVERSE_TELECINE )
-   {
-     vdpauDeinterlace = true;
-   }
+     ||  method == VS_INTERLACEMETHOD_VDPAU_INVERSE_TELECINE)
+  {
+    m_bVdpauDeinterlacing = true;
+  }
 
-  if (!vdpauDeinterlace && hasVdpauGlInterop)
+  if (!m_bVdpauDeinterlacing && method != VS_INTERLACEMETHOD_VDPAU_NONE && hasVdpauGlInterop)
   {
     if (m_vdpauOutputMethod == OUTPUT_GL_INTEROP_YUV)
       return true;
@@ -1455,41 +1456,16 @@ int CVDPAU::Decode(AVCodecContext *avctx, AVFrame *pFrame)
     return VC_ERROR;
   }
 
-  static int dropcount = 0;
-  if (avctx->hurry_up && dropcount < 2)
+  if (m_dropState)
   {
-    if (m_usedOutPic.size() > 0)
-    {
-      CSingleLock lock(m_outPicSec);
-      OutputPicture *pic;
-      pic = m_usedOutPic.front();
-      m_usedOutPic.pop_front();
-      pic->render = NULL;
-      m_freeOutPic.push_back(pic);
-      CLog::Log(LOGDEBUG, "CVDAPU::Decode: hurry drop picused: %d, picfree: %d",
-                m_usedOutPic.size(), m_freeOutPic.size());
-    }
-    else
-    {
-      CSingleLock lock(m_mixerSec);
-      m_mixerCmd |= MIXER_CMD_HURRY;
-      CLog::Log(LOGDEBUG, "CVDAPU::Decode: hurry drop next pic in mixer msg: %d",
-                m_mixerMessages.size());
-    }
-    dropcount++;
-
-    // different commit
-    // dropping should occur at the end of the queue, not in the middle
-    // need to prevent ffmpeg from dropping frames
-#define VC_DROPPED 0
     CSingleLock lock(m_mixerSec);
-    if (m_mixerMessages.size() < 3)
-      return VC_BUFFER | VC_DROPPED;
-    else
-      return VC_DROPPED;
+    m_mixerCmd |= MIXER_CMD_HURRY;
+    CLog::Log(LOGDEBUG, "CVDAPU::Decode: hurry drop next pic in mixer msg: %d",
+              m_mixerMessages.size());
+    m_dropCount++;
   }
   else
-    dropcount = 0;
+    m_dropCount = 0;
 
   int noOfMsg, noOfPics, noOfFreePics;
   noOfMsg = m_mixerMessages.size();
@@ -1570,7 +1546,11 @@ bool CVDPAU::GetPicture(AVCodecContext* avctx, AVFrame* frame, DVDVideoPicture* 
   *picture = m_presentPicture->DVDPic;
 
   if (m_presentPicture->render)
+  {
     picture->format = DVDVideoPicture::FMT_VDPAU_420;
+    if (!m_bNormalSpeed)
+      picture->iFlags &= DVP_FLAG_DROPPED;
+  }
   else
   {
     picture->format = DVDVideoPicture::FMT_VDPAU;
@@ -1621,18 +1601,17 @@ void CVDPAU::Reset()
   }
 }
 
-// this is called from DVDPlayerVideo when seeking
-// no need to have deinterlacing in this case
-void CVDPAU::NormalSpeed(bool normal)
+bool CVDPAU::AllowFrameDropping()
 {
-  if (normal)
-  {
-    SetDeinterlacing();
-  }
+  if (m_bVdpauDeinterlacing && m_dropCount < 5)
+    return false;
   else
-  {
-    SetDeinterlacingOff();
-  }
+    return true;
+}
+
+void CVDPAU::SetDropState(bool bDrop)
+{
+  m_dropState = bDrop;
 }
 
 void CVDPAU::Present()
@@ -1834,11 +1813,6 @@ void CVDPAU::Process()
       mixerfield = VDP_VIDEO_MIXER_PICTURE_STRUCTURE_FRAME;
     }
 
-    if (cmd & MIXER_CMD_HURRY)
-    {
-      mixersteps--;
-    }
-
     // mixer stage
     for (int mixerstep = 0; mixerstep < mixersteps; mixerstep++)
     {
@@ -1936,8 +1910,15 @@ void CVDPAU::Process()
         }
       }
 
-      // start vdpau video mixer
-      vdp_st = vdp_video_mixer_render(videoMixer,
+      // skip mixer step if requested
+      if (cmd & MIXER_CMD_HURRY)
+      {
+        outPic->DVDPic.iFlags |= DVP_FLAG_DROPPED;
+      }
+      else
+      {
+        // start vdpau video mixer
+        vdp_st = vdp_video_mixer_render(videoMixer,
                                 VDP_INVALID_HANDLE,
                                 0,
                                 mixerfield,
@@ -1952,7 +1933,8 @@ void CVDPAU::Process()
                                 &(m_mixerInput[1].outRectVid),
                                 0,
                                 NULL);
-      CheckStatus(vdp_st, __LINE__);
+        CheckStatus(vdp_st, __LINE__);
+      }
 
       // put pic in out queue
       outPicLock.Enter();
@@ -1965,7 +1947,7 @@ void CVDPAU::Process()
       m_picSignal.Set();
       mixerLock.Leave();
 
-      if (cmd)
+      if (cmd & MIXER_CMD_FLUSH)
         break;
 
     }// for (mixer stage)

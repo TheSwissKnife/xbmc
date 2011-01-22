@@ -47,6 +47,10 @@ public:
     virtual CCriticalSection* Section() { return NULL; }
     virtual long              Release();
     virtual IHardwareDecoder* Acquire();
+    // signal to vdpau (mixer) whether we run normal speed or not
+    // so it can switch off deinterlacing
+    virtual bool AllowFrameDropping() {return true;};
+    virtual void SetDropState(bool bDrop) {return;};
     protected:
     long m_references;
   };
