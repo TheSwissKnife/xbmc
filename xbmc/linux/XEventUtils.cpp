@@ -73,12 +73,16 @@ bool WINAPI SetEvent(HANDLE hEvent)
     CloseHandle(*it);
   }
 
+  SDL_mutexP(hEvent->m_hMutex);
+
   DuplicateHandle(GetCurrentProcess(), hEvent, GetCurrentProcess(), NULL, 0, FALSE, DUPLICATE_SAME_ACCESS);
 
   if (hEvent->m_bManualEvent == true)
     SDL_CondBroadcast(hEvent->m_hCond);
   else
     SDL_CondSignal(hEvent->m_hCond);
+
+  SDL_mutexV(hEvent->m_hMutex);
 
   CloseHandle(hEvent);
 
@@ -132,12 +136,13 @@ bool WINAPI PulseEvent(HANDLE hEvent)
   // we should always unset the event on pulse
   SDL_mutexP(hEvent->m_hMutex);
   hEvent->m_bEventSet = false;
-  SDL_mutexV(hEvent->m_hMutex);
 
   if (hEvent->m_bManualEvent == true)
     SDL_CondBroadcast(hEvent->m_hCond);
   else
     SDL_CondSignal(hEvent->m_hCond);
+
+  SDL_mutexV(hEvent->m_hMutex);
 
   return true;
 }
