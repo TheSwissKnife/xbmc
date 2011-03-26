@@ -563,7 +563,8 @@ bool CVDPAU::Supports(EINTERLACEMETHOD method)
 
   if (hasVdpauGlInterop)
   {
-    if (method == VS_INTERLACEMETHOD_RENDER_BOB)
+    if (method == VS_INTERLACEMETHOD_RENDER_BOB
+    || method == VS_INTERLACEMETHOD_FORCE_VDPAU_NONE)
       return true;
   }
 
@@ -998,7 +999,7 @@ bool CVDPAU::ConfigOutputMethod(AVCodecContext *avctx, AVFrame *pFrame)
     m_bVdpauDeinterlacing = true;
   }
 
-  if (!m_bVdpauDeinterlacing && method != VS_INTERLACEMETHOD_VDPAU_NONE && hasVdpauGlInterop)
+  if (!m_bVdpauDeinterlacing && method != VS_INTERLACEMETHOD_FORCE_VDPAU_NONE && hasVdpauGlInterop)
   {
     if (m_vdpauOutputMethod == OUTPUT_GL_INTEROP_YUV)
       return true;
@@ -2016,8 +2017,10 @@ void CVDPAU::Process()
         outPic->DVDPic.iRepeatPicture = -0.5;
         if (mixerstep == 1)
         {
-          outPic->DVDPic.dts = DVD_NOPTS_VALUE;
-          outPic->DVDPic.pts = DVD_NOPTS_VALUE;
+          double pts = m_mixerInput[1].DVDPic.pts +
+              (m_mixerInput[0].DVDPic.pts - m_mixerInput[1].DVDPic.pts)/2;
+          outPic->DVDPic.dts = pts; //DVD_NOPTS_VALUE;
+          outPic->DVDPic.pts = pts; //DVD_NOPTS_VALUE;
         }
       }
 
