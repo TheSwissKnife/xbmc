@@ -140,6 +140,7 @@ public:
   void SetSharpness();
   void SetDeinterlacing();
   void SetDeinterlacingOff();
+  EINTERLACEMETHOD GetDeinterlacingMethod(bool log = false);
   void SetHWUpscaling();
 
   pictureAge picAge;
@@ -304,6 +305,7 @@ protected:
   CEvent m_picSignal;
   CEvent m_msgSignal;
   bool m_bVdpauDeinterlacing;
+  bool m_binterlacedFrame;
   bool m_bNormalSpeed;
   int m_dropCount;
   bool hasVdpauGlInterop;
