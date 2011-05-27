@@ -351,6 +351,13 @@ bool CVDPAU::MakePixmapGL(int index)
 
 void CVDPAU::SetWidthHeight(int width, int height)
 {
+  int vdpauMaxHeight = g_advancedSettings.m_videoVDPAUmaxHeight;
+  if (vdpauMaxHeight > 0 && height > vdpauMaxHeight)
+  {
+    width = MathUtils::round_int((double)width * vdpauMaxHeight / height);
+    height = vdpauMaxHeight;
+  }
+
   //pick the smallest dimensions, so we downscale with vdpau and upscale with opengl when appropriate
   //this requires the least amount of gpu memory bandwidth
   if (g_graphicsContext.GetWidth() < width || g_graphicsContext.GetHeight() < height || upScale)

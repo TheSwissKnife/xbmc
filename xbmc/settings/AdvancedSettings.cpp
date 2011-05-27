@@ -91,6 +91,7 @@ void CAdvancedSettings::Initialize()
   m_videoAllowMpeg4VDPAU = false;
   m_videoVDPAUdeintHD = -1;
   m_videoVDPAUdeintSD = -1;
+  m_videoVDPAUmaxHeight = -1;
   m_DXVACheckCompatibility = false;
   m_DXVACheckCompatibilityPresent = false;
 
@@ -445,6 +446,7 @@ bool CAdvancedSettings::Load()
     XMLUtils::GetBoolean(pElement,"allowmpeg4vdpau",m_videoAllowMpeg4VDPAU);
     XMLUtils::GetInt(pElement,"vdpauHDdeint",m_videoVDPAUdeintHD);
     XMLUtils::GetInt(pElement,"vdpauSDdeint",m_videoVDPAUdeintSD);
+    XMLUtils::GetInt(pElement,"vdpauMaxHeight",m_videoVDPAUmaxHeight);
 
     TiXmlElement* pAdjustRefreshrate = pElement->FirstChildElement("adjustrefreshrate");
     if (pAdjustRefreshrate)

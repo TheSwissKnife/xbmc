@@ -101,6 +101,7 @@ class CAdvancedSettings
     CStdString m_videoPPFFmpegPostProc;
     int m_videoVDPAUdeintHD;
     int m_videoVDPAUdeintSD;
+    int m_videoVDPAUmaxHeight;
     bool m_musicUseTimeSeeking;
     int m_musicTimeSeekForward;
     int m_musicTimeSeekBackward;
