@@ -962,6 +962,7 @@ bool CVDPAU::ConfigVDPAU(AVCodecContext* avctx, int ref_frames)
 
   vdpauConfigured = true;
   m_bNormalSpeed = true;
+  m_binterlacedFrame = false;
   return true;
 }
 
@@ -972,10 +973,17 @@ bool CVDPAU::ConfigOutputMethod(AVCodecContext *avctx, AVFrame *pFrame)
   if (!pFrame)
     return true;
 
+  if (m_binterlacedFrame != pFrame->interlaced_frame)
+  {
+    m_binterlacedFrame = pFrame->interlaced_frame;
+    CLog::Log(LOGNOTICE, "CVDPAU::ConfigOutputMethod: interlaced flag changed to %d", m_binterlacedFrame);
+    tmpDeint = 0;
+  }
+
   // check if one of the vdpau interlacing methods are chosen
   m_bVdpauDeinterlacing = false;
-  EINTERLACEMETHOD method = g_settings.m_currentVideoSettings.m_InterlaceMethod;
-  if((method == VS_INTERLACEMETHOD_AUTO && pFrame->interlaced_frame)
+  EINTERLACEMETHOD method = GetDeinterlacingMethod();
+  if((method == VS_INTERLACEMETHOD_AUTO && m_binterlacedFrame)
      ||  method == VS_INTERLACEMETHOD_VDPAU_BOB
      ||  method == VS_INTERLACEMETHOD_VDPAU_TEMPORAL
      ||  method == VS_INTERLACEMETHOD_VDPAU_TEMPORAL_HALF
@@ -1784,9 +1792,8 @@ void CVDPAU::Process()
     int mixersteps;
     VdpVideoMixerPictureStructure mixerfield;
 
-    EINTERLACEMETHOD method = g_settings.m_currentVideoSettings.m_InterlaceMethod;
-    if((method == VS_INTERLACEMETHOD_AUTO &&
-  		        m_mixerInput[1].DVDPic.iFlags & DVP_FLAG_INTERLACED)
+    EINTERLACEMETHOD method = GetDeinterlacingMethod();
+    if((method == VS_INTERLACEMETHOD_AUTO && m_binterlacedFrame)
       ||  method == VS_INTERLACEMETHOD_VDPAU_BOB
       ||  method == VS_INTERLACEMETHOD_VDPAU_TEMPORAL
       ||  method == VS_INTERLACEMETHOD_VDPAU_TEMPORAL_HALF
@@ -1932,6 +1939,16 @@ void CVDPAU::Process()
                                 0,
                                 NULL);
         CheckStatus(vdp_st, __LINE__);
+
+        if (m_vdpauOutputMethod == OUTPUT_PIXMAP)
+        {
+          vdp_st = vdp_presentation_queue_display(vdp_flip_queue[outPic->pixmapIdx],
+                                                outPic->outputSurface,
+                                                0,
+                                                0,
+                                                0);
+          CheckStatus(vdp_st, __LINE__);
+        }
       }
 
       // put pic in out queue

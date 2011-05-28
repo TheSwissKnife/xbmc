@@ -304,6 +304,7 @@ protected:
   CEvent m_picSignal;
   CEvent m_msgSignal;
   bool m_bVdpauDeinterlacing;
+  bool m_binterlacedFrame;
   bool m_bNormalSpeed;
   int m_dropCount;
   bool hasVdpauGlInterop;
