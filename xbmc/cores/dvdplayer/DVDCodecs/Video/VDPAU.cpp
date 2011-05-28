@@ -962,6 +962,7 @@ bool CVDPAU::ConfigVDPAU(AVCodecContext* avctx, int ref_frames)
 
   vdpauConfigured = true;
   m_bNormalSpeed = true;
+  m_binterlacedFrame = false;
   return true;
 }
 
@@ -972,10 +973,17 @@ bool CVDPAU::ConfigOutputMethod(AVCodecContext *avctx, AVFrame *pFrame)
   if (!pFrame)
     return true;
 
+  if (!m_binterlacedFrame && pFrame->interlaced_frame)
+  {
+    m_binterlacedFrame = pFrame->interlaced_frame;
+    CLog::Log(LOGNOTICE, "CVDPAU::ConfigOutputMethod: detected interlaced frame");
+    tmpDeint = 0;
+  }
+
   // check if one of the vdpau interlacing methods are chosen
   m_bVdpauDeinterlacing = false;
-  EINTERLACEMETHOD method = g_settings.m_currentVideoSettings.m_InterlaceMethod;
-  if((method == VS_INTERLACEMETHOD_AUTO && pFrame->interlaced_frame)
+  EINTERLACEMETHOD method = GetDeinterlacingMethod();
+  if((method == VS_INTERLACEMETHOD_AUTO && m_binterlacedFrame)
      ||  method == VS_INTERLACEMETHOD_VDPAU_BOB
      ||  method == VS_INTERLACEMETHOD_VDPAU_TEMPORAL
      ||  method == VS_INTERLACEMETHOD_VDPAU_TEMPORAL_HALF
@@ -1828,9 +1836,14 @@ void CVDPAU::Process()
     int mixersteps;
     VdpVideoMixerPictureStructure mixerfield;
 
+<<<<<<< HEAD
     EINTERLACEMETHOD method = g_settings.m_currentVideoSettings.m_InterlaceMethod;
     if((method == VS_INTERLACEMETHOD_AUTO &&
   		        m_mixerInput[1].DVDPic.iFlags & DVP_FLAG_INTERLACED)
+=======
+    EINTERLACEMETHOD method = GetDeinterlacingMethod();
+    if((method == VS_INTERLACEMETHOD_AUTO && m_binterlacedFrame)
+>>>>>>> f63568c... vdpau: fix de-interlacing if flag toggles
       ||  method == VS_INTERLACEMETHOD_VDPAU_BOB
       ||  method == VS_INTERLACEMETHOD_VDPAU_TEMPORAL
       ||  method == VS_INTERLACEMETHOD_VDPAU_TEMPORAL_HALF
