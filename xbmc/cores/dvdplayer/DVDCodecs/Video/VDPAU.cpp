@@ -675,6 +675,23 @@ void CVDPAU::SetSharpness()
   CheckStatus(vdp_st, __LINE__);
 }
 
+void CVDPAU::SetDeintSkipChroma()
+{
+  VdpVideoMixerAttribute attribute[] = { VDP_VIDEO_MIXER_ATTRIBUTE_SKIP_CHROMA_DEINTERLACE};
+  VdpStatus vdp_st;
+
+  uint8_t val;
+  if (g_advancedSettings.m_videoVDPAUdeintSkipChromaHD && vid_height >= 720)
+    val = 1;
+  else
+    val = 0;
+
+  void const *values[]={&val};
+  vdp_st = vdp_video_mixer_set_attribute_values(videoMixer, ARSIZE(attribute), attribute, values);
+
+  CheckStatus(vdp_st, __LINE__);
+}
+
 void CVDPAU::SetHWUpscaling()
 {
 #ifdef VDP_VIDEO_MIXER_FEATURE_HIGH_QUALITY_SCALING_L1
@@ -759,6 +776,8 @@ void CVDPAU::SetDeinterlacing()
     vdp_st = vdp_video_mixer_set_feature_enables(videoMixer, ARSIZE(feature), feature, enabled);
   }
   CheckStatus(vdp_st, __LINE__);
+
+  SetDeintSkipChroma();
 }
 
 void CVDPAU::SetDeinterlacingOff()
