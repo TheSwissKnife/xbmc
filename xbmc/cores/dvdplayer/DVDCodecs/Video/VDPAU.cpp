@@ -113,11 +113,10 @@ CVDPAU::CVDPAU()
   m_mixerfield = VDP_VIDEO_MIXER_PICTURE_STRUCTURE_FRAME;
   m_mixerstep  = 0;
 
-  for (int i=0;i<3;i++)
+  for (int i=0;i<NUM_OUTPUT_SURFACES;i++)
   {
     m_glPixmap[i] = 0;
     m_Pixmap[i] = 0;
-    m_glContext[i] = 0;
   }
 
   if (!glXBindTexImageEXT)
@@ -176,7 +175,7 @@ CVDPAU::CVDPAU()
     outputSurfaces[i] = VDP_INVALID_HANDLE;
 
   videoMixer = VDP_INVALID_HANDLE;
-  for (int i = 0; i < 3; i++)
+  for (int i = 0; i < NUM_OUTPUT_SURFACES; i++)
   {
     vdp_flip_target[i] = VDP_INVALID_HANDLE;
     vdp_flip_queue[i] = VDP_INVALID_HANDLE;
@@ -248,6 +247,7 @@ bool CVDPAU::Open(AVCodecContext* avctx, const enum PixelFormat)
 
     m_vdpauOutputMethod = OUTPUT_NONE;
     glInteropFinish = false;
+    m_bPixmapBound = false;
 
     /* finally setup ffmpeg */
     avctx->get_buffer      = CVDPAU::FFGetBuffer;
@@ -286,7 +286,7 @@ bool CVDPAU::MakePixmapGL(int index)
     GLX_DEPTH_SIZE, 8,
     GLX_DRAWABLE_TYPE, GLX_PIXMAP_BIT,
     GLX_BIND_TO_TEXTURE_RGBA_EXT, True,
-    GLX_DOUBLEBUFFER, True,
+    GLX_DOUBLEBUFFER, False,
     GLX_Y_INVERTED_EXT, True,
     GLX_X_RENDERABLE, True,
     None
@@ -317,33 +317,6 @@ bool CVDPAU::MakePixmapGL(int index)
     XFree(fbConfigs);
     return false;
   }
-
-  /* to make the pixmap usable, it needs to have any context associated with it */
-  GLXContext  lastctx = glXGetCurrentContext();
-  GLXDrawable lastdrw = glXGetCurrentDrawable();
-
-  XVisualInfo *visInfo;
-  visInfo = glXGetVisualFromFBConfig(m_Display, fbConfigs[fbConfigIndex]);
-  if (!visInfo)
-  {
-    CLog::Log(LOGINFO, "GLX Error: Could not obtain X Visual Info for pixmap");
-    XFree(fbConfigs);
-    return false;
-  }
-  XFree(fbConfigs);
-
-  CLog::Log(LOGINFO, "GLX: Creating Pixmap context");
-  m_glContext[index] = glXCreateContext(m_Display, visInfo, NULL, True);
-  XFree(visInfo);
-
-  if (!glXMakeCurrent(m_Display, m_glPixmap[index], m_glContext[index]))
-  {
-    CLog::Log(LOGINFO, "GLX Error: Could not make Pixmap current");
-    return false;
-  }
-
-  /* restore what thread had before */
-  glXMakeCurrent(m_Display, lastdrw, lastctx);
 
   return true;
 
@@ -417,7 +390,12 @@ bool CVDPAU::SetTexture(int plane, int field)
 {
   m_glTexture = 0;
 
-  if(hasVdpauGlInterop)
+  if (recover)
+    return false;
+
+  CSingleLock lock(m_flipSec);
+
+  if (m_vdpauOutputMethod != OUTPUT_PIXMAP)
   {
     m_glTexture = GLGetSurfaceTexture(plane, field);
   }
@@ -434,43 +412,38 @@ GLuint CVDPAU::GetTexture()
 
 void CVDPAU::BindPixmap()
 {
-  if (hasVdpauGlInterop)
+  if (recover)
     return;
 
-  if (m_glPixmap[m_flipBufferIdx])
-  {
-    if(m_flipBuffer[m_flipBufferIdx]->outputSurface != VDP_INVALID_HANDLE)
-    {
-      VdpPresentationQueueStatus status;
-      VdpTime time;
-      VdpStatus vdp_st;
-      VdpOutputSurface surface = m_flipBuffer[m_flipBufferIdx]->outputSurface;
+  CSingleLock lock(m_flipSec);
 
-      vdp_st = vdp_presentation_queue_query_surface_status(
-                    vdp_flip_queue[m_flipBufferIdx], surface, &status, &time);
-      CheckStatus(vdp_st, __LINE__);
-      while(status != VDP_PRESENTATION_QUEUE_STATUS_VISIBLE && vdp_st == VDP_STATUS_OK)
-      {
-        Sleep(1);
-        vdp_st = vdp_presentation_queue_query_surface_status(
-                      vdp_flip_queue[m_flipBufferIdx], surface, &status, &time);
-        CheckStatus(vdp_st, __LINE__);
-      }
-    }
-    
-    glXBindTexImageEXT(m_Display, m_glPixmap[m_flipBufferIdx], GLX_FRONT_LEFT_EXT, NULL);
+  if (m_vdpauOutputMethod != OUTPUT_PIXMAP)
+    return;
+
+  if (m_flipBuffer[m_flipBufferIdx])
+  {
+    int idx = m_flipBuffer[m_flipBufferIdx]->pixmapIdx;
+    m_bPixmapBound = true;
+    lock.Leave();
+    glXBindTexImageEXT(m_Display, m_glPixmap[idx], GLX_FRONT_LEFT_EXT, NULL);
   }
   else CLog::Log(LOGERROR,"(VDPAU) BindPixmap called without valid pixmap");
 }
 
 void CVDPAU::ReleasePixmap()
 {
-  if (hasVdpauGlInterop)
+  CSingleLock lock(m_flipSec);
+
+  if (m_vdpauOutputMethod != OUTPUT_PIXMAP)
     return;
 
-  if (m_glPixmap[m_flipBufferIdx])
+  if (m_flipBuffer[m_flipBufferIdx])
   {
-    glXReleaseTexImageEXT(m_Display, m_glPixmap[m_flipBufferIdx], GLX_FRONT_LEFT_EXT);
+    int idx = m_flipBuffer[m_flipBufferIdx]->pixmapIdx;
+    lock.Leave();
+    glXReleaseTexImageEXT(m_Display, m_glPixmap[idx], GLX_FRONT_LEFT_EXT);
+    lock.Enter();
+    m_bPixmapBound = false;
   }
   else CLog::Log(LOGERROR,"(VDPAU) ReleasePixmap called without valid pixmap");
 }
@@ -1081,8 +1054,8 @@ bool CVDPAU::ConfigOutputMethod(AVCodecContext *avctx, AVFrame *pFrame)
     totalAvailableOutputSurfaces = 0;
 
     int tmpMaxOutputSurfaces = NUM_OUTPUT_SURFACES;
-    if (vid_width == FULLHD_WIDTH)
-      tmpMaxOutputSurfaces = NUM_OUTPUT_SURFACES_FOR_FULLHD;
+    if (!hasVdpauGlInterop)
+      tmpMaxOutputSurfaces = 4;
 
     // Creation of outputSurfaces
     for (int i = 0; i < NUM_OUTPUT_SURFACES && i < tmpMaxOutputSurfaces; i++)
@@ -1094,9 +1067,6 @@ bool CVDPAU::ConfigOutputMethod(AVCodecContext *avctx, AVFrame *pFrame)
                                        &outputSurfaces[i]);
       CHECK_VDPAU_RETURN(vdp_st, false)
 
-      m_allOutPic[i].outputSurface = outputSurfaces[i];
-      m_allOutPic[i].render = NULL;
-      m_freeOutPic.push_back(&m_allOutPic[i]);
       totalAvailableOutputSurfaces++;
     }
     CLog::Log(LOGNOTICE, " (VDPAU) Total Output Surfaces Available: %i of a max (tmp: %i const: %i)",
@@ -1104,13 +1074,22 @@ bool CVDPAU::ConfigOutputMethod(AVCodecContext *avctx, AVFrame *pFrame)
                        tmpMaxOutputSurfaces,
                        NUM_OUTPUT_SURFACES);
 
+    for (int i = 0; i < NUM_OUTPUT_SURFACES; i++)
+    {
+      if (hasVdpauGlInterop)
+        m_allOutPic[i].outputSurface = outputSurfaces[i];
+
+      m_allOutPic[i].render = NULL;
+      m_freeOutPic.push_back(&m_allOutPic[i]);
+    }
+
     m_mixerCmd = 0;
 
     if (hasVdpauGlInterop)
       m_vdpauOutputMethod = OUTPUT_GL_INTEROP_RGB;
     else
     {
-      for (int i = 0; i < 3; i++)
+      for (int i = 0; i < NUM_OUTPUT_SURFACES; i++)
       {
         MakePixmap(i, OutWidth, OutHeight);
         vdp_st = vdp_presentation_queue_target_create_x11(vdp_device,
@@ -1122,6 +1101,8 @@ bool CVDPAU::ConfigOutputMethod(AVCodecContext *avctx, AVFrame *pFrame)
                                                vdp_flip_target[i],
                                                &vdp_flip_queue[i]);
         CHECK_VDPAU_RETURN(vdp_st, false);
+
+        m_allOutPic[i].pixmapIdx = i;
       }
       m_vdpauOutputMethod = OUTPUT_PIXMAP;
     }
@@ -1135,6 +1116,20 @@ bool CVDPAU::FiniOutputMethod()
   VdpStatus vdp_st;
 
   CSingleLock lock(m_flipSec);
+
+  // can't continue if pixmap is bound
+  int iter = 0;
+  while (m_bPixmapBound)
+  {
+    lock.Leave();
+    Sleep(1);
+    lock.Enter();
+    if (++iter > 1000)
+    {
+      CLog::Log(LOGERROR, "CVDPAU::FiniOutputMethod - waiting for m_bPixmapBound timed out");
+      m_bPixmapBound = false;
+    }
+  }
 
   // stop mixer thread
   StopThread();
@@ -1159,7 +1154,7 @@ bool CVDPAU::FiniOutputMethod()
   }
 
   // destroy pixmap stuff
-  for (int i = 0; i < 3; i++)
+  for (int i = 0; i < NUM_OUTPUT_SURFACES; i++)
   {
     if (vdp_flip_queue[i] != VDP_INVALID_HANDLE)
     {
@@ -1185,12 +1180,6 @@ bool CVDPAU::FiniOutputMethod()
       CLog::Log(LOGDEBUG, "GLX: Destroying XPixmap");
       XFreePixmap(m_Display, m_Pixmap[i]);
       m_Pixmap[i] = NULL;
-    }
-    if (m_glContext[i])
-    {
-      CLog::Log(LOGDEBUG, "GLX: Destroying glContext");
-      glXDestroyContext(m_Display, m_glContext[i]);
-      m_glContext[i] = NULL;
     }
   }
 
@@ -1515,28 +1504,25 @@ int CVDPAU::Decode(AVCodecContext *avctx, AVFrame *pFrame)
 
   if (m_vdpauOutputMethod == OUTPUT_GL_INTEROP_YUV)
   {
-    CLog::Log(LOGERROR, "CVDPAU::Decode: mismatch in vdpau output method");
-    return VC_ERROR;
+    return VC_BUFFER;
   }
 
   if (m_dropState)
   {
     CSingleLock lock(m_mixerSec);
     m_mixerCmd |= MIXER_CMD_HURRY;
-    CLog::Log(LOGDEBUG, "CVDAPU::Decode: hurry drop next pic in mixer msg: %d",
+    CLog::Log(LOGDEBUG, "CVDPAU::Decode: hurry drop next pic in mixer msg: %d",
               m_mixerMessages.size());
     m_dropCount++;
   }
   else
     m_dropCount = 0;
 
-  int noOfMsg, noOfPics, noOfFreePics;
-  noOfMsg = m_mixerMessages.size();
-  noOfPics = m_usedOutPic.size();
-  noOfFreePics = m_freeOutPic.size();
-
   // wait for mixer to get pic
   int usedPics, msgs;
+  int iter = 0;
+  int cappedQueueSize = (m_vdpauOutputMethod == OUTPUT_PIXMAP) ? 4 : 1;
+  retval = 0;
   while (1)
   {
     { CSingleLock lock(m_outPicSec);
@@ -1545,38 +1531,80 @@ int CVDPAU::Decode(AVCodecContext *avctx, AVFrame *pFrame)
     { CSingleLock lock(m_mixerSec);
       msgs = m_mixerMessages.size();
     }
-    if (usedPics != 0 || msgs == 0)
-      break;
 
-    if (!m_picSignal.WaitMSec(100))
+    // check if we have a picture to return
+    if (m_vdpauOutputMethod != OUTPUT_PIXMAP)
     {
-      { CSingleLock lock(m_outPicSec);
-         usedPics = m_usedOutPic.size();
+      if (usedPics > 0)
+      {
+        retval |= VC_PICTURE;
+        break;
       }
-      { CSingleLock lock(m_mixerSec);
-         msgs = m_mixerMessages.size();
-      }
-      CLog::Log(LOGWARNING, "CVDPAU::Decode: timed out waiting for picture, messages: %d, pics %d",
-                 msgs, usedPics);
-      break;
     }
-  }
+    else
+    {
+      if (usedPics > 0 && m_usedOutPic.front()->DVDPic.iFlags & DVP_FLAG_DROPPED)
+      {
+        retval |= VC_PICTURE;
+        break;
+      }
+      else if (usedPics > 0)
+      {
+        VdpPresentationQueueStatus status;
+        VdpTime time;
+        VdpStatus vdp_st;
+        VdpOutputSurface surface = m_usedOutPic.front()->outputSurface;
 
-  retval = 0;
-  if (msgs < 3 && usedPics < 4)
+        vdp_st = vdp_presentation_queue_query_surface_status(
+                      vdp_flip_queue[m_usedOutPic.front()->pixmapIdx],
+                      surface, &status, &time);
+        CheckStatus(vdp_st, __LINE__);
+        if(status == VDP_PRESENTATION_QUEUE_STATUS_VISIBLE && vdp_st == VDP_STATUS_OK)
+        {
+          retval |= VC_PICTURE;
+          break;
+        }
+      }
+    }// PIXMAP
+
+    // wait if we have enough msgs but don't have an output from mixer
+    // if everything is running smooth, we won't wait here
+    if (usedPics == 0 && msgs > cappedQueueSize + 2 && m_picSignal.WaitMSec(200))
+    {
+      continue;
+    }
+    // now if we still appear to have no usedPics and a lots msgs we assume mixer thread is having difficulties?
+    if (!(usedPics == 0 && msgs > cappedQueueSize))
+    {
+      // return in order to fill our buffers - VALUES should reflact number of outputsurfaces?
+      if (usedPics < std::min(std::max(totalAvailableOutputSurfaces - 1, 1), cappedQueueSize) ||
+          usedPics + msgs < std::min(std::max(totalAvailableOutputSurfaces - 1, 1), cappedQueueSize) + 2)
+        break;
+
+      // wait to get visible picture
+      if (usedPics > 0)
+      {
+        usleep(50);
+        if (++iter < 5000)
+          continue;
+      }
+    }
+
+    // buffers are full and we got no visible picture
+    { CSingleLock lock(m_outPicSec);
+       usedPics = m_usedOutPic.size();
+    }
+    { CSingleLock lock(m_mixerSec);
+       msgs = m_mixerMessages.size();
+    }
+    CLog::Log(LOGERROR, "CVDPAU::Decode: timed out waiting for picture, messages: %d, pics %d",
+                 msgs, usedPics);
+    retval |= VC_ERROR;
+    break;
+  }// while
+
+  if (usedPics + msgs < std::min(std::max(totalAvailableOutputSurfaces - 1, 1), cappedQueueSize) + 2)
     retval |= VC_BUFFER;
-
-  if (usedPics > 0)
-  {
-    retval |= VC_PICTURE;
-  }
-
-  // just in case - should not happen
-  if (!retval)
-  {
-    CLog::Log(LOGERROR, "CVDAPU::Decode: no picture, used: %d", usedPics);
-    retval | VC_ERROR;
-  }
 
   return retval;
 }
@@ -1703,18 +1731,6 @@ void CVDPAU::Present()
 
   m_flipBuffer[index] = m_presentPicture;
   m_presentPicture = NULL;
-
-  if (hasVdpauGlInterop)
-    return;
-
-  presentSurface = m_flipBuffer[index]->outputSurface;
-
-  vdp_st = vdp_presentation_queue_display(vdp_flip_queue[index],
-                                          presentSurface,
-                                          0,
-                                          0,
-                                          0);
-  CheckStatus(vdp_st, __LINE__);
 }
 
 void CVDPAU::Flip()
@@ -1788,6 +1804,7 @@ void CVDPAU::Process()
   VdpTime time;
   unsigned int cmd;
   bool gotMsg;
+  int outputSurfaceNum = 0;
 
   CSingleLock mixerLock(m_mixerSec);
   mixerLock.Leave();
@@ -1800,16 +1817,11 @@ void CVDPAU::Process()
   {
     // wait for message
     gotMsg = false;
-    int noOfFreePics;
     MixerMessage msg;
     cmd = 0;
 
-    outPicLock.Enter();
-    noOfFreePics = m_freeOutPic.size();
-    outPicLock.Leave();
-
-    mixerLock.Enter();
-    if (!m_mixerMessages.empty() && noOfFreePics > 1)
+     mixerLock.Enter();
+    if (!m_mixerMessages.empty())
     {
       msg = m_mixerMessages.front();
       m_mixerMessages.pop();
@@ -1943,17 +1955,33 @@ void CVDPAU::Process()
       }
 
       // get free pic from queue
-      outPicLock.Enter();
-      if (m_freeOutPic.empty())
+      OutputPicture *outPic = NULL;
+      while (!outPic && !m_bStop)
       {
-        CLog::Log(LOGERROR, "CVDPAU::Process: no output picture available");
+        bool gotPic = false;
+        outPicLock.Enter();
+        if (!m_freeOutPic.empty())
+          gotPic = true;
+
+        // make sure not to overwrite an output surface
+        if (m_vdpauOutputMethod == OUTPUT_PIXMAP &&
+             m_usedOutPic.size() >= totalAvailableOutputSurfaces)
+          gotPic = false;
+
+        if (gotPic)
+        {
+          outPic = m_freeOutPic.front();
+          m_freeOutPic.pop_front();
+          outPic->render = NULL;
+          outPicLock.Leave();
+          break;
+        }
         outPicLock.Leave();
-        break;
+        Sleep(1);
       }
-      OutputPicture *outPic = m_freeOutPic.front();
-      m_freeOutPic.pop_front();
-      outPicLock.Leave();
-      outPic->render = NULL;
+      if (!outPic)
+        break;
+
 
       // set pts / dts for interlaced pic
       outPic->DVDPic = m_mixerInput[1].DVDPic;
@@ -1971,11 +1999,15 @@ void CVDPAU::Process()
 
       // skip mixer step if requested
       if (cmd & MIXER_CMD_HURRY)
-      {
         outPic->DVDPic.iFlags |= DVP_FLAG_DROPPED;
-      }
       else
       {
+        if (m_vdpauOutputMethod == OUTPUT_PIXMAP)
+        {
+          outPic->outputSurface = outputSurfaces[outputSurfaceNum];
+          outputSurfaceNum = (outputSurfaceNum +1) % totalAvailableOutputSurfaces;
+        }
+
         // start vdpau video mixer
         vdp_st = vdp_video_mixer_render(videoMixer,
                                 VDP_INVALID_HANDLE,
@@ -2212,31 +2244,13 @@ bool CVDPAU::GLRegisterVideoSurfaces(OutputPicture *outPic)
 GLuint CVDPAU::GLGetSurfaceTexture(int plane, int field)
 {
   GLuint glReturn = 0;
-  if (recover)
-    return glReturn;
 
 #ifdef GL_NV_vdpau_interop
 
-  CSingleLock lock(m_flipSec);
-
   //check if current output method is valid
-  if (m_GlInteropStatus == OUTPUT_GL_INTEROP_RGB)
+  if (m_GlInteropStatus != m_vdpauOutputMethod)
   {
-    if (m_flipBuffer[m_flipBufferIdx])
-    {
-      if (m_flipBuffer[m_flipBufferIdx]->DVDPic.format != DVDVideoPicture::FMT_VDPAU
-          || field != 0)
-        glInteropFinish = true;
-    }
-  }
-  else if (m_GlInteropStatus == OUTPUT_GL_INTEROP_YUV)
-  {
-    if (m_flipBuffer[m_flipBufferIdx])
-     {
-       if (m_flipBuffer[m_flipBufferIdx]->DVDPic.format != DVDVideoPicture::FMT_VDPAU_420
-           || (field != 1 && field != 2))
-         glInteropFinish = true;
-     }
+    glInteropFinish = true;
   }
 
   // check for request to finish interop
