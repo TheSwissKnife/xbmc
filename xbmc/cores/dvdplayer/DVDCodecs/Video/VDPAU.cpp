@@ -117,7 +117,7 @@ CVDPAU::CVDPAU()
   {
     m_glPixmap[i] = 0;
     m_Pixmap[i] = 0;
-    m_glContext[i] = 0;
+//    m_glContext[i] = 0;
   }
 
   if (!glXBindTexImageEXT)
@@ -286,7 +286,7 @@ bool CVDPAU::MakePixmapGL(int index)
     GLX_DEPTH_SIZE, 8,
     GLX_DRAWABLE_TYPE, GLX_PIXMAP_BIT,
     GLX_BIND_TO_TEXTURE_RGBA_EXT, True,
-    GLX_DOUBLEBUFFER, True,
+    GLX_DOUBLEBUFFER, False,
     GLX_Y_INVERTED_EXT, True,
     GLX_X_RENDERABLE, True,
     None
@@ -318,32 +318,32 @@ bool CVDPAU::MakePixmapGL(int index)
     return false;
   }
 
-  /* to make the pixmap usable, it needs to have any context associated with it */
-  GLXContext  lastctx = glXGetCurrentContext();
-  GLXDrawable lastdrw = glXGetCurrentDrawable();
-
-  XVisualInfo *visInfo;
-  visInfo = glXGetVisualFromFBConfig(m_Display, fbConfigs[fbConfigIndex]);
-  if (!visInfo)
-  {
-    CLog::Log(LOGINFO, "GLX Error: Could not obtain X Visual Info for pixmap");
-    XFree(fbConfigs);
-    return false;
-  }
-  XFree(fbConfigs);
-
-  CLog::Log(LOGINFO, "GLX: Creating Pixmap context");
-  m_glContext[index] = glXCreateContext(m_Display, visInfo, NULL, True);
-  XFree(visInfo);
-
-  if (!glXMakeCurrent(m_Display, m_glPixmap[index], m_glContext[index]))
-  {
-    CLog::Log(LOGINFO, "GLX Error: Could not make Pixmap current");
-    return false;
-  }
-
-  /* restore what thread had before */
-  glXMakeCurrent(m_Display, lastdrw, lastctx);
+//  /* to make the pixmap usable, it needs to have any context associated with it */
+//  GLXContext  lastctx = glXGetCurrentContext();
+//  GLXDrawable lastdrw = glXGetCurrentDrawable();
+//
+//  XVisualInfo *visInfo;
+//  visInfo = glXGetVisualFromFBConfig(m_Display, fbConfigs[fbConfigIndex]);
+//  if (!visInfo)
+//  {
+//    CLog::Log(LOGINFO, "GLX Error: Could not obtain X Visual Info for pixmap");
+//    XFree(fbConfigs);
+//    return false;
+//  }
+//  XFree(fbConfigs);
+//
+//  CLog::Log(LOGINFO, "GLX: Creating Pixmap context");
+//  m_glContext[index] = glXCreateContext(m_Display, visInfo, NULL, True);
+//  XFree(visInfo);
+//
+//  if (!glXMakeCurrent(m_Display, m_glPixmap[index], m_glContext[index]))
+//  {
+//    CLog::Log(LOGINFO, "GLX Error: Could not make Pixmap current");
+//    return false;
+//  }
+//
+//  /* restore what thread had before */
+//  glXMakeCurrent(m_Display, lastdrw, lastctx);
 
   return true;
 
@@ -1184,12 +1184,12 @@ bool CVDPAU::FiniOutputMethod()
       XFreePixmap(m_Display, m_Pixmap[i]);
       m_Pixmap[i] = NULL;
     }
-    if (m_glContext[i])
-    {
-      CLog::Log(LOGDEBUG, "GLX: Destroying glContext");
-      glXDestroyContext(m_Display, m_glContext[i]);
-      m_glContext[i] = NULL;
-    }
+//    if (m_glContext[i])
+//    {
+//      CLog::Log(LOGDEBUG, "GLX: Destroying glContext");
+//      glXDestroyContext(m_Display, m_glContext[i]);
+//      m_glContext[i] = NULL;
+//    }
   }
 
   { CSingleLock lock(m_mixerSec);
