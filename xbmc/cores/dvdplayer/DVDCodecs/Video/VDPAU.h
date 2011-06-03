@@ -94,9 +94,8 @@ public:
 
   PFNGLXBINDTEXIMAGEEXTPROC    glXBindTexImageEXT;
   PFNGLXRELEASETEXIMAGEEXTPROC glXReleaseTexImageEXT;
-  GLXPixmap  m_glPixmap[3];
-  Pixmap  m_Pixmap[3];
-  GLXContext m_glContext[3];
+  GLXPixmap  m_glPixmap[NUM_OUTPUT_SURFACES];
+  Pixmap  m_Pixmap[NUM_OUTPUT_SURFACES];
 
 #ifdef GL_NV_vdpau_interop
   PFNGLVDPAUINITNVPROC glVDPAUInitNV;
@@ -176,8 +175,8 @@ public:
 
   VdpDevice                            vdp_device;
   VdpGetProcAddress *                  vdp_get_proc_address;
-  VdpPresentationQueueTarget           vdp_flip_target[3];
-  VdpPresentationQueue                 vdp_flip_queue[3];
+  VdpPresentationQueueTarget           vdp_flip_target[NUM_OUTPUT_SURFACES];
+  VdpPresentationQueue                 vdp_flip_queue[NUM_OUTPUT_SURFACES];
   VdpDeviceDestroy *                   vdp_device_destroy;
 
   VdpVideoSurfaceCreate *              vdp_video_surface_create;
@@ -236,6 +235,7 @@ public:
 
 
   int      totalAvailableOutputSurfaces;
+  int      totalAvailablePixmaps;
   uint32_t vid_width, vid_height;
   uint32_t max_references;
   Display* m_Display;
@@ -278,6 +278,8 @@ protected:
     VdpOutputSurface outputSurface;
     vdpau_render_state * render;
     GLuint texture[4];
+    int pixmapIdx;
+    int surfaceIdx;
 #ifdef GL_NV_vdpau_interop
     GLvdpauSurfaceNV glVdpauSurface;
 #endif
