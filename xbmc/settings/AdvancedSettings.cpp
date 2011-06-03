@@ -62,6 +62,8 @@ void CAdvancedSettings::Initialize()
   m_audioPlayCountMinimumPercent = 90.0f;
   m_audioHost = "default";
 
+  m_videoSubsOverlayMaxLinger = 5;
+
   m_videoSubsDelayRange = 10;
   m_videoAudioDelayRange = 10;
   m_videoSmallStepBackSeconds = 7;
@@ -430,6 +432,8 @@ bool CAdvancedSettings::Load()
     XMLUtils::GetBoolean(pElement,"allowlanczos3",m_videoAllowLanczos3);
     XMLUtils::GetFloat(pElement,"autoscalemaxfps",m_videoAutoScaleMaxFps, 0.0f, 1000.0f);
     XMLUtils::GetBoolean(pElement,"allowmpeg4vdpau",m_videoAllowMpeg4VDPAU);
+
+    XMLUtils::GetInt(pElement, "subsoverlaymaxlinger", m_videoSubsOverlayMaxLinger, 0, 30);
 
     TiXmlElement* pAdjustRefreshrate = pElement->FirstChildElement("adjustrefreshrate");
     if (pAdjustRefreshrate)

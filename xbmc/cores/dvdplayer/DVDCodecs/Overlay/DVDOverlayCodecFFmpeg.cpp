@@ -28,6 +28,7 @@
 #include "utils/Win32Exception.h"
 #include "utils/log.h"
 #include "utils/EndianSwap.h"
+#include "settings/AdvancedSettings.h"
 
 CDVDOverlayCodecFFmpeg::CDVDOverlayCodecFFmpeg() : CDVDOverlayCodec("FFmpeg Subtitle Decoder")
 {
@@ -245,7 +246,10 @@ CDVDOverlay* CDVDOverlayCodecFFmpeg::GetOverlay()
     CDVDOverlayImage* overlay = new CDVDOverlayImage();
 
     overlay->iPTSStartTime = DVD_MSEC_TO_TIME(m_Subtitle.start_display_time);
-    overlay->iPTSStopTime  = DVD_MSEC_TO_TIME(m_Subtitle.end_display_time);
+    //ffmpeg pgssub default to 20 seconds which is so annoying
+    // - adjust the limit on this via advancedsettings
+    overlay->iPTSStopTime  = std::min(DVD_SEC_TO_TIME(g_advancedSettings.m_videoSubsOverlayMaxLinger), DVD_MSEC_TO_TIME(m_Subtitle.end_display_time));
+
     overlay->replace  = true;
     overlay->linesize = rect.w;
     overlay->data     = (BYTE*)malloc(rect.w * rect.h);

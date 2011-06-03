@@ -203,6 +203,8 @@ class CAdvancedSettings
     CStdString m_videoItemSeparator;
     std::vector<CStdString> m_musicTagsFromFileFilters;
 
+    int m_videoSubsOverlayMaxLinger;
+
     bool m_bVideoLibraryHideAllItems;
     bool m_bVideoLibraryAllItemsOnBottom;
     int m_iVideoLibraryRecentlyAddedItems;
