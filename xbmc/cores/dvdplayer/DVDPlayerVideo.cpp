@@ -1078,6 +1078,7 @@ int CDVDPlayerVideo::OutputPicture(DVDVideoPicture* pPicture, double pts)
   }
   maxfps = g_renderManager.GetMaximumFPS();
 
+CLog::Log(LOGDEBUG, "ASB: OutputPicture pts: %f", pts);
   if (pPicture->format == DVDVideoPicture::FMT_VDPAU || pPicture->format == DVDVideoPicture::FMT_VDPAU_420)
   {
     if (!g_renderManager.WaitVdpauFlip(100))
@@ -1187,6 +1188,9 @@ int CDVDPlayerVideo::OutputPicture(DVDVideoPicture* pPicture, double pts)
   {
     m_iDroppedRequest = 0;
   }
+//ASB disable dropping
+  m_iLateFrames = 0;
+
 
   if( m_speed < 0 )
   {

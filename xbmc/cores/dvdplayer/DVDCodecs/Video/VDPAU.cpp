@@ -1594,9 +1594,15 @@ int CVDPAU::Decode(AVCodecContext *avctx, AVFrame *pFrame)
     { CSingleLock lock(m_mixerSec);
       msgs = m_mixerMessages.size();
     }
-    if (visible || msgs < 1)
+    //if (visible || msgs < 1)
+    if (visible || (msgs < 1 && usedPics < 4) || usedPics < 3)
+    {
+      CLog::Log(LOGDEBUG, "ASB: CVDPAU::Decode: visible: %i, msgs: %i usedPics: %i", (int)visible, msgs, usedPics);
       break;
+    }
 
+    Sleep(1);
+    /*
     if (!m_picSignal.WaitMSec(100))
     {
       { CSingleLock lock(m_outPicSec);
@@ -1609,13 +1615,17 @@ int CVDPAU::Decode(AVCodecContext *avctx, AVFrame *pFrame)
                  msgs, usedPics);
       break;
     }
+    */
   }
 
   retval = 0;
   if (msgs < 3 && usedPics < 4)
     retval |= VC_BUFFER;
 
+/*
   if (usedPics > 0)
+*/
+  if (visible)
   {
     retval |= VC_PICTURE;
   }

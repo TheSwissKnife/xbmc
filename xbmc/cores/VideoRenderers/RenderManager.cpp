@@ -615,8 +615,10 @@ void CXBMCRenderManager::Present()
   lock.Leave();
 
   /* wait for this present to be valid */
+/*
   if(g_graphicsContext.IsFullScreenVideo())
     WaitPresentTime(m_presenttime);
+*/
 
 //  ResetVdpauFlip();
 
