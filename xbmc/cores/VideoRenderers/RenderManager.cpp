@@ -130,7 +130,8 @@ static double wrap(double x, double minimum, double maximum)
 
 void CXBMCRenderManager::WaitPresentTime(double presenttime)
 {
-  double frametime;
+
+  double frametime; // video reference clock tick increment (each display refresh will move our clock forward by this amount in seconds)
   int fps = g_VideoReferenceClock.GetRefreshRate(&frametime);
   if(fps <= 0)
   {
@@ -139,59 +140,122 @@ void CXBMCRenderManager::WaitPresentTime(double presenttime)
     return;
   }
 
-  bool ismaster = CDVDClock::IsMasterClock();
+  double presentcorr = m_presentcorr;
 
-  //the videoreferenceclock updates its clock on every vertical blank
-  //we want every frame's presenttime to end up in the middle of two vblanks
-  //if CDVDPlayerAudio is the master clock, we add a correction to the presenttime
-  if (ismaster)
-    presenttime += m_presentcorr * frametime;
+/* add back in when we have sorted out lateness algorithm
+  // when asked to reset our wait position state by player do so
+  if (m_waitPosReset)
+  {
+    CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::WaitPresentTime WAITRESET");
+    memset(m_errorbuff, 0, sizeof(m_errorbuff));
+    presentcorr = 0.0;
+  }
+*/
 
-  double clock     = CDVDClock::WaitAbsoluteClock(presenttime * DVD_TIME_BASE) / DVD_TIME_BASE;
-  double target    = 0.5;
-  double error     = ( clock - presenttime ) / frametime - target;
+  double targetpos = 0.5; //fraction of frame ahead of targetwaitclock that the abs dvd clock should ideally be after our wait has completed
 
+  // assume the caller is trying to wait for the vblank prior to the one the frame should finally display on, and to avoid any possible indeterminate behaviour around the
+  // the absolute clock value matching at that time we will target half an interval before it (so that the appropriate tick will take it distinctly past)
+  double targetwaitclock = presenttime - (targetpos * frametime);
+
+  targetwaitclock += presentcorr * frametime;  // adjust by our accumulated correction
+  int64_t waitedtime;
+  double iclock;
+  double clock = CDVDClock::WaitAbsoluteClock(targetwaitclock * DVD_TIME_BASE, &iclock, &waitedtime) / DVD_TIME_BASE;
+  double error     = ( clock - targetwaitclock ) / frametime - targetpos;  //error is number(fraction) of frames out we are from where we were trying to correct to
+  double abserror     = ( clock - presenttime ) / frametime; //abserror is number(fraction) of frames out we are from where we were requested to present
   m_presenterr     = error;
 
-  // correct error so it targets the closest vblank
-  error = wrap(error, 0.0 - target, 1.0 - target);
-
-  // scale the error used for correction,
-  // based on how much buffer we have on
-  // that side of the target
-  if(error > 0)
-    error /= 2.0 * (1.0 - target);
-  if(error < 0)
-    error /= 2.0 * (0.0 + target);
-
-  //save error in the buffer
-  m_errorindex = (m_errorindex + 1) % ERRORBUFFSIZE;
-  m_errorbuff[m_errorindex] = error;
-
-  //get the average error from the buffer
-  double avgerror = 0.0;
-  for (int i = 0; i < ERRORBUFFSIZE; i++)
-    avgerror += m_errorbuff[i];
-
-  avgerror /= ERRORBUFFSIZE;
-
-
-  //if CDVDPlayerAudio is not the master clock, we change the clock speed slightly
-  //to make every frame's presenttime end up in the middle of two vblanks
-  if (!ismaster)
+// just experiments for future lateness algorithm
+/*
+  m_waitclock = clock;
+  m_lastpresenttime  = presenttime;
+  m_frametime  = frametime;
+  if (waitedtime == 0 || abserror > targetpos)
   {
-    //integral correction, clamp to -0.5:0.5 range
-    m_presentcorr = std::max(std::min(m_presentcorr + avgerror * 0.01, 0.1), -0.1);
-    g_VideoReferenceClock.SetFineAdjust(1.0 - avgerror * 0.01 - m_presentcorr * 0.01);
+     if (waitedtime == 0)
+     {
+       m_waitlateness = iclock / DVD_TIME_BASE - clock;
+     }
+     else
+     {
+       m_waitlateness = (abserror - targetpos) * frametime;
+     }
+  }
+  else
+       m_waitlateness = 0.0;
+*/
+
+  // we should be careful not too overshoot if we are getting close to a wrap boundary to avoid
+  // swinging back and forward unnecessarily
+
+  // if wrapped abserror value changes by more 10% of frame from last then reset presentcorr and avgs
+  // we should wrap error combine with m_presentcorr and if abs value greater 90% targetpos but less than 105% move presentcorr by 1% avg error
+  // else move by 5% - reset avg
+  // if presentcorr approx 0 and error-wrapped approx abs(0.5) then steer by 10% in that direction to get it quickly away from beat spot
+  // if presentcorr + error-wrapped > 0.55 (we are required to make too large a forward correction) then reset presentcorr and avgs
+  // if presentcorr + error-wrapped < -0.55 targetpos then wrap presentcorr to 0.5 targetpos to avoid any issues
+
+  error = wrap(error, 0.0 - targetpos, 1.0 - targetpos);
+  abserror = wrap(abserror, 0.0 - targetpos, 1.0 - targetpos);
+  bool reset = false;
+  if (m_lastabserror)
+    CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::WaitPresentTime abserror: %f error: %f m_lastabserror: %f presentcorr: %f", abserror, error, m_lastabserror, presentcorr);
+  else
+    CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::WaitPresentTime abserror: %f error: %f m_lastabserror: NULL presentcorr: %f", abserror, error, presentcorr);
+  if ( (m_lastabserror != NULL && (fabs(abserror - m_lastabserror) > 0.1)) || (presentcorr > 0.55) || (fabs(presentcorr + error) > 0.6))
+  {
+     //unstable fluctuations in position (implying no point in trying to target), or targetting too far forward a correction,
+     //or simply too large the current error target...then reset presentcorr and error buffer
+     //note: allowing the small forward correction overshoot helps to avoid hanging around the 0.5 beat zone for long enough to reduce the chances of
+     //targetting forward then backward with high frequency.
+     presentcorr = 0.0;
+     m_lastabserror = NULL; //avoid next iteration using the lastabserror value
+     reset = true;
+  }
+  else if (presentcorr < -0.55)
+  {
+     //targetting to far backward, force it to next vblank at next iteration by wrapping presentcorr straight to 0.5 and reset error buffer
+     //this avoids travelling through the troublesome beat zone
+     presentcorr = 0.5;
+     m_lastabserror = NULL; //avoid next iteration using the lastabserror value
+     reset = true;
+  }
+  else if (fabs(presentcorr) < 0.05 && fabs(error) > 0.45)
+  {
+     //strongly target in error direction to move clear of beat zone quickly initially
+     presentcorr += 0.1 * error;
+  }
+  else if (fabs(presentcorr + error) > 0.45)
+  {
+     //we have drifted close to the beat zone so now we try to drift carefully so that we only wrap when surely required
+     // this is done with 1% adjustments of recent error average
+     //save error in the buffer
+     m_errorindex = (m_errorindex + 1) % ERRORBUFFSIZE;
+     m_errorbuff[m_errorindex] = error;
+
+     //get the average error from the buffer
+     double avgerror = 0.0;
+     for (int i = 0; i < ERRORBUFFSIZE; i++)
+           avgerror += m_errorbuff[i];
+     avgerror /= ERRORBUFFSIZE;
+
+     presentcorr = presentcorr + avgerror * 0.01;
   }
   else
   {
-    //integral correction, wrap to -0.5:0.5 range
-    m_presentcorr = wrap(m_presentcorr + avgerror * 0.01, target - 1.0, target);
-    g_VideoReferenceClock.SetFineAdjust(1.0);
+     // adjust by 5% of error directly
+     reset = true; //adjustment is large enough to warrant clearing averages
+     presentcorr = presentcorr + (error * 0.05);
   }
 
-  //printf("%f %f % 2.0f%% % f % f\n", presenttime, clock, m_presentcorr * 100, error, error_org);
+  if (reset)
+  {
+     memset(m_errorbuff, 0, sizeof(m_errorbuff));
+  }
+  // store new value back in global for access by codec info
+  m_presentcorr = presentcorr;
+
 }
 
 CStdString CXBMCRenderManager::GetVSyncState()
@@ -615,10 +679,8 @@ void CXBMCRenderManager::Present()
   lock.Leave();
 
   /* wait for this present to be valid */
-/*
   if(g_graphicsContext.IsFullScreenVideo())
     WaitPresentTime(m_presenttime);
-*/
 
 //  ResetVdpauFlip();
 

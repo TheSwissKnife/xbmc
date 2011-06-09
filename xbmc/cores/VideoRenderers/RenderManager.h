@@ -247,6 +247,7 @@ protected:
   };
 
   double     m_presenttime;
+  double     m_lastabserror;
   double     m_presentcorr;
   double     m_presenterr;
   double     m_errorbuff[ERRORBUFFSIZE];
