@@ -76,6 +76,7 @@ public:
     // demuxer related messages
 
     DEMUXER_PACKET,                 // data packet
+    DEMUXER_NOPACKET,                 // data packet
     DEMUXER_RESET,                  // reset the demuxer
 
 
@@ -309,6 +310,12 @@ class CDVDMsgDemuxerReset : public CDVDMsg
 {
 public:
   CDVDMsgDemuxerReset() : CDVDMsg(DEMUXER_RESET)  {}
+};
+
+class CDVDMsgDemuxerNoPacket : public CDVDMsg
+{
+public:
+  CDVDMsgDemuxerNoPacket() : CDVDMsg(DEMUXER_NOPACKET)  {}
 };
 
 
