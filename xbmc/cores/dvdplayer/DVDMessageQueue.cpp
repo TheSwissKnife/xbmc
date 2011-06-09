@@ -25,6 +25,7 @@
 #include "threads/SingleLock.h"
 #include "DVDClock.h"
 #include "utils/MathUtils.h"
+#include "utils/TimeUtils.h"
 
 using namespace std;
 
@@ -164,14 +165,21 @@ MsgQueueReturnCode CDVDMessageQueue::Get(CDVDMsg** pMsg, unsigned int iTimeoutIn
     return MSGQ_NOT_INITIALIZED;
   }
 
+  bool packetreqfulfilled = true;
   if(m_list.empty() && m_bEmptied == false && priority == 0 && m_owner != "teletext")
   {
     CLog::Log(LOGWARNING, "CDVDMessageQueue(%s)::Get - asked for new data packet, with nothing available", m_owner.c_str());
+    packetreqfulfilled = false;
     m_bEmptied = true;
   }
 
+  int64_t start = CurrentHostCounter();
   while (!m_bAbortRequest)
   {
+    if (m_list.empty() && (!packetreqfulfilled))
+    {
+       break;
+    }
     if(!m_list.empty() && m_list.back().priority >= priority && !m_bCaching)
     {
       DVDMessageListItem& item(m_list.back());
@@ -199,7 +207,9 @@ MsgQueueReturnCode CDVDMessageQueue::Get(CDVDMsg** pMsg, unsigned int iTimeoutIn
       ret = MSGQ_OK;
       break;
     }
-    else if (!iTimeoutInMilliSeconds)
+// we can end up missing the event and waiting too long to timeout
+//    else if (!iTimeoutInMilliSeconds)
+    else if (!iTimeoutInMilliSeconds || CurrentHostCounter() - start > (int64_t)iTimeoutInMilliSeconds * CurrentHostFrequency() / 1000 )
     {
       ret = MSGQ_TIMEOUT;
       break;
@@ -217,6 +227,12 @@ MsgQueueReturnCode CDVDMessageQueue::Get(CDVDMsg** pMsg, unsigned int iTimeoutIn
     }
   }
 
+  if (m_list.empty() && (!packetreqfulfilled))
+  {
+     CDVDMsgDemuxerNoPacket* msg = new CDVDMsgDemuxerNoPacket();
+     *pMsg = msg;
+     return MSGQ_OK;
+  }
   if (m_bAbortRequest) return MSGQ_ABORT;
 
   return (MsgQueueReturnCode)ret;
