@@ -36,6 +36,7 @@
 #include "settings/AdvancedSettings.h"
 #include "Application.h"
 #include "utils/MathUtils.h"
+#include "utils/TimeUtils.h"
 #include "DVDCodecs/DVDCodecUtils.h"
 #include "cores/VideoRenderers/RenderFlags.h"
 
@@ -1084,7 +1085,7 @@ bool CVDPAU::ConfigOutputMethod(AVCodecContext *avctx, AVFrame *pFrame)
 
     int tmpMaxOutputSurfaces = NUM_OUTPUT_SURFACES;
     if (!hasVdpauGlInterop)
-      tmpMaxOutputSurfaces = 4;
+      tmpMaxOutputSurfaces = 6;
 
     // Creation of outputSurfaces
     for (int i = 0; i < NUM_OUTPUT_SURFACES && i < tmpMaxOutputSurfaces; i++)
@@ -1219,6 +1220,7 @@ bool CVDPAU::FiniOutputMethod()
 
   // force cleanup of opengl interop
   glInteropFinish = true;
+  return true;
 }
 
 void CVDPAU::SpewHardwareAvailable()  //Copyright (c) 2008 Wladimir J. van der Laan  -- VDPInfo
@@ -1449,6 +1451,7 @@ int CVDPAU::Decode(AVCodecContext *avctx, AVFrame *pFrame)
     outRectVid.y1 = OutHeight;
   }
 
+// is this simply recycling last pics when present never happened?
   if (m_presentPicture)
   {
     CSingleLock lock(m_outPicSec);
@@ -1521,13 +1524,17 @@ int CVDPAU::Decode(AVCodecContext *avctx, AVFrame *pFrame)
     m_msgSignal.Set();
   }
 
+// TODO: now that I have changed the ffmpeg decode to still call hardware decode if no picture it does not make sense to just return error ...for now assume that we just return VC_BUFFER until I understand if we can do better and do some actual presenting here
   if (m_vdpauOutputMethod == OUTPUT_GL_INTEROP_YUV)
   {
-    CLog::Log(LOGERROR, "CVDPAU::Decode: mismatch in vdpau output method");
-    return VC_ERROR;
+//    CLog::Log(LOGERROR, "CVDPAU::Decode: mismatch in vdpau output method");
+//    return VC_ERROR;
+      return VC_BUFFER;
   }
 
-  if (avctx->hurry_up)
+  int usedPics, msgs;
+
+  if (avctx->hurry_up && (!AllowDecoderDrop()))
   {
     if (m_usedOutPic.size() > 0)
     {
@@ -1547,15 +1554,21 @@ int CVDPAU::Decode(AVCodecContext *avctx, AVFrame *pFrame)
       CLog::Log(LOGDEBUG, "CVDAPU::Decode: hurry drop next pic in mixer msg: %d",
                 m_mixerMessages.size());
     }
-    m_dropCount++;
+    m_dropCount++; //count for triggering decoder dropping if required
 
     // dropping should occur at the end of the queue, not in the middle
     // need to prevent ffmpeg from dropping frames
-    CSingleLock lock(m_mixerSec);
-    if (m_mixerMessages.size() < 3)
-      return VC_BUFFER | VC_DROPPED;
+    { CSingleLock lock(m_outPicSec);
+       usedPics = m_usedOutPic.size();
+    }
+    { CSingleLock lock(m_mixerSec);
+       msgs = m_mixerMessages.size();
+    }
+    //if (m_mixerMessages.size() < 3)
+    if (msgs + usedPics < 5)
+      return VC_BUFFER | VC_POSTDROPPED | VC_DROPPED;
     else
-      return VC_DROPPED;
+      return VC_POSTDROPPED | VC_DROPPED;
   }
   else
     m_dropCount = 0;
@@ -1566,10 +1579,15 @@ int CVDPAU::Decode(AVCodecContext *avctx, AVFrame *pFrame)
   noOfFreePics = m_freeOutPic.size();
 
   // wait for mixer to get pic
-  int usedPics, msgs;
   bool visible;
+  int64_t start = CurrentHostCounter();
+  int iter = 0;
   while (1)
   {
+    // get mixer pics count first - we could end up double counting this way (as pic moves to usedOutPics) but probably better than missing it
+    { CSingleLock lock(m_mixerSec);
+      msgs = m_mixerMessages.size();
+    }
     { CSingleLock lock(m_outPicSec);
       usedPics = m_usedOutPic.size();
 
@@ -1578,6 +1596,7 @@ int CVDPAU::Decode(AVCodecContext *avctx, AVFrame *pFrame)
         visible = true;
       else if (usedPics > 0)
       {
+        iter++;
         VdpPresentationQueueStatus status;
         VdpTime time;
         VdpStatus vdp_st;
@@ -1586,22 +1605,38 @@ int CVDPAU::Decode(AVCodecContext *avctx, AVFrame *pFrame)
         vdp_st = vdp_presentation_queue_query_surface_status(
                       vdp_flip_queue[m_usedOutPic.front()->pixmapIdx],
                       surface, &status, &time);
+        
+        
         CheckStatus(vdp_st, __LINE__);
         if(status == VDP_PRESENTATION_QUEUE_STATUS_VISIBLE && vdp_st == VDP_STATUS_OK)
           visible = true;
       }
     }
-    { CSingleLock lock(m_mixerSec);
-      msgs = m_mixerMessages.size();
-    }
-    //if (visible || msgs < 1)
-    if (visible || (msgs < 1 && usedPics < 4) || usedPics < 3)
+
+    if (visible || (usedPics + msgs < 4 && pFrame) || (usedPics + msgs == 0) || iter > 500)  // don't wait around as we are either visible or not buffered enough
     {
-      CLog::Log(LOGDEBUG, "ASB: CVDPAU::Decode: visible: %i, msgs: %i usedPics: %i", (int)visible, msgs, usedPics);
-      break;
+      if (usedPics + msgs == 0)
+      {
+          //check one last time for in-flight ones
+          { CSingleLock lock(m_mixerSec);
+             msgs = m_mixerMessages.size();
+          }
+          { CSingleLock lock(m_outPicSec);
+             usedPics = m_usedOutPic.size();
+          }
+      }
+      if (visible || (usedPics + msgs < 4 && pFrame) || (usedPics + msgs == 0) || iter > 500)
+      {    
+         int64_t done = CurrentHostCounter();
+         if (pFrame)
+            CLog::Log(LOGDEBUG, "ASB: CVDPAU::Decode: pFrame now: %"PRId64", visible: %i msgs: %i usedPics: %i WAIT DUR: %"PRId64" queries: %i", done, (int)visible, msgs, usedPics, done - start, iter);
+        else
+         CLog::Log(LOGDEBUG, "ASB: CVDPAU::Decode: NO pFrame now: %"PRId64", visible: %i msgs: %i usedPics: %i WAIT DUR: %"PRId64" queries: %i", done, (int)visible, msgs, usedPics, done - start, iter);
+         break;
+      }
     }
 
-    Sleep(1);
+    usleep(200); //TODO: improve this later to be platform independant (look into nanosleep)
     /*
     if (!m_picSignal.WaitMSec(100))
     {
@@ -1619,23 +1654,24 @@ int CVDPAU::Decode(AVCodecContext *avctx, AVFrame *pFrame)
   }
 
   retval = 0;
-  if (msgs < 3 && usedPics < 4)
+  //if (msgs < 3 && usedPics < 4)
+  if (msgs + usedPics < 6)
     retval |= VC_BUFFER;
 
-/*
-  if (usedPics > 0)
-*/
   if (visible)
   {
     retval |= VC_PICTURE;
   }
 
+// I don't think it is an error to return with zero since that should mean we did not get a picture and we don't need any more data fed into decoder
+/* 
   // just in case - should not happen
   if (!retval)
   {
     CLog::Log(LOGERROR, "CVDAPU::Decode: no picture, used: %d", usedPics);
     retval | VC_ERROR;
   }
+*/
 
   return retval;
 }
@@ -1742,7 +1778,9 @@ void CVDPAU::NormalSpeed(bool normal)
 bool CVDPAU::AllowDecoderDrop()
 {
   if (m_bVdpauDeinterlacing && m_dropCount < 5)
+  { 
     return false;
+  }
   else
     return true;
 }

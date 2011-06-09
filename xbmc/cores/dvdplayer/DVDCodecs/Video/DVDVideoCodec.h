@@ -141,7 +141,12 @@ typedef std::vector<CDVDCodecOption> CDVDCodecOptions;
 #define VC_PICTURE  0x00000004  // the decoder got a picture, call Decode(NULL, 0) again to parse the rest of the data
 #define VC_USERDATA 0x00000008  // the decoder found some userdata,  call Decode(NULL, 0) again to parse the rest of the data
 #define VC_FLUSHED  0x00000010  // the decoder lost it's state, we need to restart decoding again
-#define VC_DROPPED  0x00000020  // needed to identify if a picture was dropped
+#define VC_DROPPED  0x00000020  // identify if a picture was dropped (in some way)
+#define VC_IMMEDIATEDROPPED  0x00000040  // identify if a picture was dropped immediately at decoder input 
+#define VC_PASTDROPPED  0x00000080  // identify if a picture was dropped by decoder but some time back and after input
+#define VC_POSTDROPPED  0x00000100  // identify if a picture was dropped just after decoder had returned it
+#define VC_DECODED  0x00000200  // identify if a picture decoded (not necessarily giving a picture)
+
 class CDVDVideoCodec
 {
 public:
@@ -227,4 +232,5 @@ public:
   {
 	return;
   }
+
 };

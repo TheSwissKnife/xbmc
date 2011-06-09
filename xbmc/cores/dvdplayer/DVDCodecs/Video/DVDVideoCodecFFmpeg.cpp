@@ -168,6 +168,10 @@ bool CDVDVideoCodecFFmpeg::Open(CDVDStreamInfo &hints, CDVDCodecOptions &options
 
   pCodec = NULL;
 
+  for (int i = 0; i < PTSBUFNUM; i++)
+      m_ptsbuf[i] = DVD_NOPTS_VALUE;
+  m_ptsbufidx = 0;
+
 #ifdef HAVE_LIBVDPAU
   if(g_guiSettings.GetBool("videoplayer.usevdpau") && !m_bSoftware)
   {
@@ -381,12 +385,18 @@ int CDVDVideoCodecFFmpeg::Decode(BYTE* pData, int iSize, double dts, double pts)
     if(section)
       lock = shared_ptr<CSingleLock>(new CSingleLock(*section));
 
-    int result;
+    int result = 0;
     if(pData)
       result = m_pHardware->Check(m_pCodecContext);
-    else
-      result = m_pHardware->Decode(m_pCodecContext, NULL);
 
+// what is the purpose of this call...as it will actually typically process anything left over from previous codec-decode
+// and generally not return 0...thus we won't go on to do a real decode
+// - in order to get hold of frames still stuck in decoder after we have nothing left to feed in we would be passing pData=NULL but still wish to call m_dllAvCodec.avcodec_decode_video2 with avpkt.data=NULL, and avpkt.size=0
+/*
+    else
+      result = m_pHardware->Decode(m_pCodecContext, NULL); 
+
+*/
     if(result)
       return result;
   }
@@ -422,11 +432,52 @@ int CDVDVideoCodecFFmpeg::Decode(BYTE* pData, int iSize, double dts, double pts)
     return VC_ERROR;
   }
 
-  if (len != iSize && !m_pCodecContext->hurry_up)
-    CLog::Log(LOGWARNING, "%s - avcodec_decode_video didn't consume the full packet. size: %d, consumed: %d", __FUNCTION__, iSize, len);
 
+// This has always annoyed me...it is generally useless since hurry_up is being set typically effects frames in the future
+//  if (len != iSize && !m_pCodecContext->hurry_up)
+  if (len != iSize && len != 0)
+     CLog::Log(LOGWARNING, "%s - avcodec_decode_video didn't consume the full packet. size: %d, consumed: %d", __FUNCTION__, iSize, len);
+ 
+  int result;
+  int dropped = 0;
+// TODO is this attempt to catch decoder drop state valid - it seems to me to be the only time we can be sure of a decoder drop!
+  if (len != iSize && len == 0)
+    dropped = VC_DROPPED | VC_IMMEDIATEDROPPED;
+  else  // add to pts buf to track pts that we still think could be decoded
+  {
+     if (m_ptsbuf[m_ptsbufidx] != DVD_NOPTS_VALUE)  //this means we have detected there was a drop in the past (not done immediately at input)
+     {
+       CLog::Log(LOGDEBUG, "ASB: CDVDVideoCodecFFmpeg::Decode VC_PASTDROPPED m_ptsbuf[m_ptsbufidx]: %f, m_ptsbufidx: %i", m_ptsbuf[m_ptsbufidx], m_ptsbufidx);
+       dropped = VC_DROPPED | VC_PASTDROPPED;
+     }
+       
+     m_ptsbuf[m_ptsbufidx] = pts;
+     m_ptsbufidx = (m_ptsbufidx + 1) % PTSBUFNUM;
+  }
+
+   if (m_pFrame->key_frame)
+       CLog::Log(LOGDEBUG, "ASB: CDVDVideoCodecFFmpeg::Decode m_pHardware->Decode: pts: %f dropped: %i m_pFrame->key_frame: %i m_pCodecContext->has_b_frames: %i m_pCodecContext->hurry_up: %i m_started: %i", pts, dropped, m_pFrame->key_frame, m_pCodecContext->has_b_frames, (int)m_pCodecContext->hurry_up, (int)m_started);
+   else
+       CLog::Log(LOGDEBUG, "ASB: CDVDVideoCodecFFmpeg::Decode m_pHardware->Decode: pts: %f dropped: %i m_pCodecContext->has_b_frames: %i m_pCodecContext->hurry_up: %i m_started: %i", pts, dropped, m_pCodecContext->has_b_frames, (int)m_pCodecContext->hurry_up, (int)m_started);
+
+// this state here appears to result that we won't process any queued frames (vdp mixer/presentation queue) this time around - which is probably not going to help in the long run if we are already late
+// so I think we should do hardware decode call first
+// also is this really a drop - except for first few frames after a discontinuity (until reference frame) - let caller decide?
   if (!iGotPicture)
-    return VC_BUFFER;
+  {
+    if(m_pHardware)
+    {
+      //call with no pFrame to inform m_pHardware->Decode function we have no picture but it can still do other post work
+      result = m_pHardware->Decode(m_pCodecContext, NULL); 
+      if(result & VC_FLUSHED)
+         Reset();
+    }
+    else
+       result = VC_BUFFER; // assumption that "no picture" implies decoder wants another packet
+
+    CLog::Log(LOGDEBUG, "ASB: CDVDVideoCodecFFmpeg::Decode !iGotPicture result: %i ", result | dropped);
+    return result | dropped;
+  }
 
   if(m_pFrame->key_frame)
   {
@@ -439,7 +490,7 @@ int CDVDVideoCodecFFmpeg::Decode(BYTE* pData, int iSize, double dts, double pts)
   && m_pHardware == NULL)
   {
     if (!m_dllSwScale.IsLoaded() && !m_dllSwScale.Load())
-        return VC_ERROR;
+        return VC_ERROR | dropped;
 
     if (!m_pConvertFrame)
     {
@@ -453,7 +504,7 @@ int CDVDVideoCodecFFmpeg::Decode(BYTE* pData, int iSize, double dts, double pts)
       {
         m_dllAvUtil.av_free(m_pConvertFrame);
         m_pConvertFrame = NULL;
-        return VC_ERROR;
+        return VC_ERROR | dropped;
       }
     }
 
@@ -465,7 +516,7 @@ int CDVDVideoCodecFFmpeg::Decode(BYTE* pData, int iSize, double dts, double pts)
     if(context == NULL)
     {
       CLog::Log(LOGERROR, "CDVDVideoCodecFFmpeg::Decode - unable to obtain sws context for w:%i, h:%i, pixfmt: %i", m_pCodecContext->width, m_pCodecContext->height, m_pCodecContext->pix_fmt);
-      return VC_ERROR;
+      return VC_ERROR | dropped;
     }
 
     m_dllSwScale.sws_scale(context
@@ -489,26 +540,33 @@ int CDVDVideoCodecFFmpeg::Decode(BYTE* pData, int iSize, double dts, double pts)
     }
   }
 
-  int result;
   if(m_pHardware)
+  {
     result = m_pHardware->Decode(m_pCodecContext, m_pFrame);
+    CLog::Log(LOGDEBUG, "ASB: CDVDVideoCodecFFmpeg::Decode m_pHardware->Decode result: %i ", result | VC_DECODED | dropped);
+  }
   else
     result = VC_PICTURE | VC_BUFFER;
 
   if(result & VC_FLUSHED)
     Reset();
 
-  return result;
+  return result | VC_DECODED | dropped;
 }
 
 void CDVDVideoCodecFFmpeg::Reset()
 {
+    CLog::Log(LOGDEBUG, "ASB: CDVDVideoCodecFFmpeg::Reset");
   m_started = false;
   m_iLastKeyframe = m_pCodecContext->has_b_frames;
   m_dllAvCodec.avcodec_flush_buffers(m_pCodecContext);
 
   if (m_pHardware)
     m_pHardware->Reset();
+
+  for (int i = 0; i < PTSBUFNUM; i++)
+      m_ptsbuf[i] = DVD_NOPTS_VALUE;
+  m_ptsbufidx = 0;
 
   if (m_pConvertFrame)
   {
@@ -578,11 +636,27 @@ bool CDVDVideoCodecFFmpeg::GetPictureCommon(DVDVideoPicture* pDvdVideoPicture)
 
 bool CDVDVideoCodecFFmpeg::GetPicture(DVDVideoPicture* pDvdVideoPicture)
 {
+  bool ret = true;
   if(m_pHardware)
-    return m_pHardware->GetPicture(m_pCodecContext, m_pFrame, pDvdVideoPicture);
+    ret = m_pHardware->GetPicture(m_pCodecContext, m_pFrame, pDvdVideoPicture);
 
-  if(!GetPictureCommon(pDvdVideoPicture))
+  else if(!GetPictureCommon(pDvdVideoPicture))
     return false;
+
+  //remove the pts from our pts tracking buffer
+  if (ret && pDvdVideoPicture->pts)
+    for (int i = 0; i < PTSBUFNUM; i++)
+    {
+        if (m_ptsbuf[i] == pDvdVideoPicture->pts)
+        {
+          m_ptsbuf[i] = DVD_NOPTS_VALUE;
+          break;
+        }
+        if (i == PTSBUFNUM - 1)
+            CLog::Log(LOGWARNING, "%s - Did not find the picture pts: %f in pts buffer", __FUNCTION__, pDvdVideoPicture->pts);
+    }
+  if (m_pHardware)
+    return ret;
 
   if(m_pConvertFrame)
   {

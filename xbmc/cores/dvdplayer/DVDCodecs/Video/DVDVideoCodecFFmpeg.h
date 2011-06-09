@@ -27,6 +27,8 @@
 #include "DllAvUtil.h"
 #include "DllSwScale.h"
 
+#define PTSBUFNUM 20 //number of pts values to keep track of in order to detect decoder drops for past pictures
+
 class CVDPAU;
 class CCriticalSection;
 
@@ -99,6 +101,8 @@ protected:
   bool              m_bSoftware;
   IHardwareDecoder *m_pHardware;
   int m_iLastKeyframe;
+  double m_ptsbuf[PTSBUFNUM]; // arrary of recent decoder pts values
+  int m_ptsbufidx; //current index to array m_ptsbuf 
   double m_dts;
   bool   m_started;
 };

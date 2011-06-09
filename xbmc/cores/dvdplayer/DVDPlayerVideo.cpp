@@ -25,6 +25,7 @@
 #include "settings/Settings.h"
 #include "video/VideoReferenceClock.h"
 #include "utils/MathUtils.h"
+#include "utils/TimeUtils.h"
 #include "DVDPlayer.h"
 #include "DVDPlayerVideo.h"
 #include "DVDCodecs/DVDFactoryCodec.h"
@@ -147,6 +148,9 @@ CDVDPlayerVideo::CDVDPlayerVideo( CDVDClock* pClock
 
   m_iCurrentPts = DVD_NOPTS_VALUE;
   m_iDroppedFrames = 0;
+  m_iOutputDroppedFrames = 0;
+  m_iDecoderDroppedFrames = 0;
+  m_iDecoderOutputDroppedFrames = 0;
   m_fFrameRate = 25;
   m_bAllowFullscreen = false;
   memset(&m_output, 0, sizeof(m_output));
@@ -189,6 +193,9 @@ bool CDVDPlayerVideo::OpenStream( CDVDStreamInfo &hint )
     //we have to wait for the clock to start otherwise alsa can cause trouble
     if (!g_VideoReferenceClock.WaitStarted(2000))
       CLog::Log(LOGDEBUG, "g_VideoReferenceClock didn't start in time");
+
+//    if (!g_VideoReferenceClock.WaitStable(2000))
+//      CLog::Log(LOGWARNING, "g_VideoReferenceClock didn't reach stability, continuing anyway");
   }
 
   if(m_messageQueue.IsInited())
@@ -274,6 +281,9 @@ void CDVDPlayerVideo::OnStartup()
 {
   CThread::SetName("CDVDPlayerVideo");
   m_iDroppedFrames = 0;
+  m_iOutputDroppedFrames = 0;
+  m_iDecoderDroppedFrames = 0;
+  m_iDecoderOutputDroppedFrames = 0;
 
   m_crop.x1 = m_crop.x2 = 0.0f;
   m_crop.y1 = m_crop.y2 = 0.0f;
@@ -291,6 +301,8 @@ void CDVDPlayerVideo::OnStartup()
   g_dvdPerformanceCounter.EnableVideoDecodePerformance(ThreadHandle());
 }
 
+static int64_t op_fintime;
+
 void CDVDPlayerVideo::Process()
 {
   CLog::Log(LOGNOTICE, "running thread: video_thread");
@@ -301,6 +313,9 @@ void CDVDPlayerVideo::Process()
   CStdString sPostProcessType;
 
   memset(&picture, 0, sizeof(DVDVideoPicture));
+
+  int iGroupId = 0;
+  int iDecodeCount = 0; //count of packets passed to decoder
 
   double pts = 0;
   double frametime = (double)DVD_TIME_BASE / m_fFrameRate;
@@ -316,7 +331,10 @@ void CDVDPlayerVideo::Process()
     int iPriority = (m_speed == DVD_PLAYSPEED_PAUSE && m_started) ? 1 : 0;
 
     CDVDMsg* pMsg;
+      //int64_t t1 = CurrentHostCounter();
     MsgQueueReturnCode ret = m_messageQueue.Get(&pMsg, iQueueTimeOut, iPriority);
+      //int64_t t2 = CurrentHostCounter();
+      //CLog::Log(LOGDEBUG, "ASB: Process m_messageQueue.Get DUR: %"PRId64"", t2 - t1);
 
     if (MSGQ_IS_ERROR(ret) || ret == MSGQ_ABORT)
     {
@@ -460,10 +478,28 @@ void CDVDPlayerVideo::Process()
       msg->m_codec = NULL;
     }
 
-    if (pMsg->IsType(CDVDMsg::DEMUXER_PACKET))
+    if (pMsg->IsType(CDVDMsg::DEMUXER_PACKET) || pMsg->IsType(CDVDMsg::DEMUXER_NOPACKET))  //no packet case added
     {
+      int iDecoderState = 0;
+      bool bPacketDrop = false;
+      int64_t t2, t3;
+      int64_t t1 = CurrentHostCounter();
+      bool nopacket = false;
+     
+      if (pMsg->IsType(CDVDMsg::DEMUXER_NOPACKET))
+      {
+         CLog::Log(LOGDEBUG, "ASB: DVDPlayerVideo::Process DEMUXER_NOPACKET");
+         t2 = t1;
+         iDecoderState = m_pVideoCodec->Decode(NULL, 0, DVD_NOPTS_VALUE, DVD_NOPTS_VALUE);
+         nopacket = true;
+         t3 = CurrentHostCounter();
+         //break; //just testing for now
+      }
+      else {
+
       DemuxPacket* pPacket = ((CDVDMsgDemuxerPacket*)pMsg)->GetPacket();
-      bool bPacketDrop     = ((CDVDMsgDemuxerPacket*)pMsg)->GetPacketDrop();
+      bPacketDrop     = ((CDVDMsgDemuxerPacket*)pMsg)->GetPacketDrop();
+      t2 = CurrentHostCounter();
 
       if (m_stalled)
       {
@@ -477,6 +513,7 @@ void CDVDPlayerVideo::Process()
       }
       else if( iDropped*frametime > DVD_MSEC_TO_TIME(100) && m_iNrOfPicturesNotToSkip == 0 )
       { // if we dropped too many pictures in a row, insert a forced picture
+        CLog::Log(LOGDEBUG, "ASB:CDVDPlayerVideo insert a forced picture");
         m_iNrOfPicturesNotToSkip = 1;
       }
 
@@ -492,17 +529,21 @@ void CDVDPlayerVideo::Process()
       }
 #endif
 
-      // if player want's us to drop this packet, do so nomatter what
-      if(bPacketDrop)
+      // if player want's us to drop this packet, do so nomatter what (after we have decoded at least a few frames)
+      if(bPacketDrop && iDecodeCount > 16)
         bRequestDrop = true;
 
       // tell codec if next frame should be dropped
       // problem here, if one packet contains more than one frame
       // both frames will be dropped in that case instead of just the first
       // decoder still needs to provide an empty image structure, with correct flags
+      CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo About to do m_pVideoCodec->Decode SetDropState=%i, bPacketDrop: %i, pPacket->pts: %f pPacket->iSize: %i", (int)bRequestDrop, (int)bPacketDrop, pPacket->pts, pPacket->iSize);
       m_pVideoCodec->SetDropState(bRequestDrop);
 
-      int iDecoderState = m_pVideoCodec->Decode(pPacket->pData, pPacket->iSize, pPacket->dts, pPacket->pts);
+      iDecoderState = m_pVideoCodec->Decode(pPacket->pData, pPacket->iSize, pPacket->dts, pPacket->pts);
+      bRequestDrop = false; // reset so that will only request a drop next time if request to by OutputPicture, this will imit us to dropping every other frame, so improve later by moving to a iRequestDrop counter so that OutputPicture can request multiple drops in one go - though situations that require this are probably not very watchable
+      iDecodeCount++;
+      t3 = CurrentHostCounter();
 
       // buffer packets so we can recover should decoder flush for some reason
       if(m_pVideoCodec->GetConvergeCount() > 0)
@@ -519,18 +560,29 @@ void CDVDPlayerVideo::Process()
       // for libavformat as a demuxer as it normally packetizes
       // pictures when they come from demuxer
       // returning VC_BUFFER and no pic is no clear indicator for having dropped a pic
-      if(bRequestDrop && !bPacketDrop && (iDecoderState & VC_DROPPED) && !(iDecoderState & VC_PICTURE))
+
+      if ((iDecoderState & VC_IMMEDIATEDROPPED) || (iDecoderState & VC_PASTDROPPED))
       {
-        m_iDroppedFrames++;
-        iDropped++;
-        // need to reset flag or next next frame will dropped as well
-        bRequestDrop = false;
+        m_iDecoderDroppedFrames++;
+        if (iDecoderState & VC_IMMEDIATEDROPPED) //until a better solution assume immediate drops only should register for continous drop count
+          iDropped++;
       }
+      else if (iDecoderState & VC_POSTDROPPED)
+      {
+        m_iDecoderOutputDroppedFrames++;
+        iDropped++;
+      }
+      m_iDroppedFrames = m_iDecoderDroppedFrames + m_iDecoderOutputDroppedFrames + m_iOutputDroppedFrames;
+      CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo::Process iDecoderState: %i demux packet pts: %f m_iDroppedFrames: %i m_iDecoderDroppedFrames: %i m_iDecoderOutputDroppedFrames: %i m_iOutputDroppedFrames: %i bRequestDrop: %i bPacketDrop: %i", iDecoderState, pPacket->pts, m_iDroppedFrames, m_iDecoderDroppedFrames, m_iDecoderOutputDroppedFrames, m_iOutputDroppedFrames, (int)bRequestDrop, (int)bPacketDrop);
+      iGroupId = pPacket->iGroupId;
+
+      } // end of else 
 
       // loop while no error
       while (!m_bStop)
       {
 
+        // TODO: I need to understand the purpose amd method of this...VC_FLUSHED part
         // if decoder was flushed, we need to seek back again to resume rendering
         if (iDecoderState & VC_FLUSHED)
         {
@@ -551,6 +603,7 @@ void CDVDPlayerVideo::Process()
           break;
         }
 
+        //TODO: how is this a reset?
         // if decoder had an error, tell it to reset to avoid more problems
         if (iDecoderState & VC_ERROR)
         {
@@ -566,9 +619,11 @@ void CDVDPlayerVideo::Process()
           m_pVideoCodec->ClearPicture(&picture);
           if (m_pVideoCodec->GetPicture(&picture))
           {
+      int64_t t4 = CurrentHostCounter();
             sPostProcessType.clear();
 
-            picture.iGroupId = pPacket->iGroupId;
+            //picture.iGroupId = pPacket->iGroupId; //what is this (the pPacket going into decoder is different than that coming out of GetPicture so what is the deal here)? Should we keep track of the last value and assume that for future as below?
+            picture.iGroupId = iGroupId;
 
             if(picture.iDuration == 0.0)
               picture.iDuration = frametime;
@@ -640,7 +695,14 @@ void CDVDPlayerVideo::Process()
               picture.iDuration *= picture.iRepeatPicture + 1;
 
 #if 1
+      int64_t t5 = CurrentHostCounter();
+      CLog::Log(LOGDEBUG, "ASB: Process about to OutputPicture pts: %f", pts);
             int iResult = OutputPicture(&picture, pts);
+      int64_t t6 = CurrentHostCounter();
+      // not including the get message which is very quick and the msg release
+
+      CLog::Log(LOGDEBUG, "ASB: Process OP pts: %f Result: %i picture.iFlags: %i m_bAllowDrop: %i m_iLateFrames: %i m_iDroppedRequest: %i m_iDroppedFrames: %i GetPacket: %"PRId64" Decode: %"PRId64" ClearPicture/GetPicture: %"PRId64" pulldown DUR: %"PRId64" OutputPicture DUR: %"PRId64" total: %"PRId64"", pts, iResult, picture.iFlags, (int)m_bAllowDrop, m_iLateFrames, m_iDroppedRequest, m_iDroppedFrames, t2 - t1, t3 - t2, t4 - t3, t5 - t4, t6 - t5, t6 - t1);
+
 #elif 0
             // testing NV12 rendering functions
             DVDVideoPicture* pTempNV12Picture = CDVDCodecUtils::ConvertToNV12Picture(&picture);
@@ -677,12 +739,17 @@ void CDVDPlayerVideo::Process()
               break;
             }
 
-            if( (iResult & EOS_DROPPED) && !bPacketDrop )
+            //if( (iResult & EOS_DROPPED) && !bPacketDrop ) //TODO: this is supposed to count non-decoder + non-vdpau drops why should we not count player requested drops as such drops?  We need to change the running counter for this to separate from decoder drops and vdpau drops
+            if (iResult & EOS_DROPPED) 
             {
+              m_iOutputDroppedFrames++;
               m_iDroppedFrames++;
-              iDropped++;
+              if (!bPacketDrop)
+                 iDropped++; 
+              else
+                 iDropped = 0;
             }
-            else
+            else //we must have sent a picture through to render so reset "dropped in a row count"
               iDropped = 0;
 
             bRequestDrop = (iResult & EOS_VERYLATE) == EOS_VERYLATE;
@@ -707,13 +774,17 @@ void CDVDPlayerVideo::Process()
         }
         */
 
+        //TODO: need to only break here when not end of stream 
         // if the decoder needs more data, we just break this loop
         // and try to get more data from the videoQueue
-        if (iDecoderState & VC_BUFFER)
+        if (iDecoderState & VC_BUFFER && (!nopacket))
           break;
 
         // the decoder didn't need more data, flush the remaning buffer
+        CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo m_pVideoCodec->Decode(NULL,...)");
         iDecoderState = m_pVideoCodec->Decode(NULL, 0, DVD_NOPTS_VALUE, DVD_NOPTS_VALUE);
+        if (!(iDecoderState & VC_PICTURE))
+           break;
       }
     }
 
@@ -961,6 +1032,7 @@ int CDVDPlayerVideo::OutputPicture(DVDVideoPicture* pPicture, double pts)
 {
 #ifdef HAS_VIDEO_PLAYBACK
   /* check so that our format or aspect has changed. if it has, reconfigure renderer */
+int64_t tminus1 = CurrentHostCounter();
   if (!g_renderManager.IsConfigured()
    || m_output.width != pPicture->iWidth
    || m_output.height != pPicture->iHeight
@@ -1072,13 +1144,15 @@ int CDVDPlayerVideo::OutputPicture(DVDVideoPicture* pPicture, double pts)
   bool   limited = false;
   int    result  = 0;
 
+int64_t t0 = CurrentHostCounter();
   if (!g_renderManager.IsStarted()) {
     CLog::Log(LOGERROR, "%s - renderer not started", __FUNCTION__);
     return EOS_ABORT;
   }
   maxfps = g_renderManager.GetMaximumFPS();
 
-CLog::Log(LOGDEBUG, "ASB: OutputPicture pts: %f", pts);
+//CLog::Log(LOGDEBUG, "ASB: OutputPicture pts: %f", pts);
+int64_t t1 = CurrentHostCounter();
   if (pPicture->format == DVDVideoPicture::FMT_VDPAU || pPicture->format == DVDVideoPicture::FMT_VDPAU_420)
   {
     if (!g_renderManager.WaitVdpauFlip(100))
@@ -1086,6 +1160,7 @@ CLog::Log(LOGDEBUG, "ASB: OutputPicture pts: %f", pts);
       return EOS_DROPPED;
     }
   }
+int64_t t2 = CurrentHostCounter();
 
   // check if our output will limit speed
   if(m_fFrameRate * abs(m_speed) / DVD_PLAYSPEED_NORMAL > maxfps*0.9)
@@ -1113,8 +1188,9 @@ CLog::Log(LOGDEBUG, "ASB: OutputPicture pts: %f", pts);
   // calculate the time we need to delay this picture before displaying
   double iSleepTime, iClockSleep, iFrameSleep, iCurrentClock, iFrameDuration;
 
-  iCurrentClock = m_pClock->GetAbsoluteClock(); // snapshot current clock
-  iClockSleep = pts - m_pClock->GetClock();  //sleep calculated by pts to clock comparison
+//  iCurrentClock = m_pClock->GetAbsoluteClock(); // snapshot current clock
+//  iClockSleep = pts - m_pClock->GetClock();  //sleep calculated by pts to clock comparison
+  iClockSleep = pts - m_pClock->GetClock(&iCurrentClock) - interval;
   iFrameSleep = m_FlipTimeStamp - iCurrentClock; // sleep calculated by duration of frame
   iFrameDuration = pPicture->iDuration;
 
@@ -1161,8 +1237,13 @@ CLog::Log(LOGDEBUG, "ASB: OutputPicture pts: %f", pts);
   else
     m_iLateFrames = 0;
 
+//TODO: get cleverer with detecting lateness (using render manager) and with telling Process() how much to drop if very very late (eg more than 100ms late should be dealt with very urgently, 50ms quite soon, else asis)
+// - and also to have some memory of whether or not decoder drops appear to be working - if not then dropped requests should be less to trigger EOS_DROPPED (or perhaps even request that the decoder switch to POST decode dropsf we have stable framerate to make the droping more efficient)
+  if (iSleepTime <= -DVD_MSEC_TO_TIME(100)) m_iLateFrames += 15;
+  else if (iSleepTime <= -DVD_MSEC_TO_TIME(50)) m_iLateFrames += 5;
+
   // ask decoder to drop frames next round, as we are very late
-  if(m_iLateFrames > 10)
+  if(m_iLateFrames > 40)
   {
     if (!(pPicture->iFlags & DVP_FLAG_NOSKIP))
     {
@@ -1171,14 +1252,19 @@ CLog::Log(LOGDEBUG, "ASB: OutputPicture pts: %f", pts);
       if (m_bAllowDrop || m_speed != DVD_PLAYSPEED_NORMAL)
       {
         result |= EOS_VERYLATE;
+        if (iSleepTime <= -DVD_MSEC_TO_TIME(100)) m_iLateFrames = 26;
+        else if (iSleepTime <= -DVD_MSEC_TO_TIME(50)) m_iLateFrames = 0;
+        else m_iLateFrames = m_iLateFrames - 10; // temporary to throttle drops since they take longer to take effect with our longer decoding pipeline
         m_pullupCorrection.Flush(); //dropped frames mess up the pattern, so just flush it
       }
 
       //if we requested 5 drops in a row and we're still late, drop on output
       //this keeps a/v sync if the decoder can't drop, or we're still calculating the framerate
-      if (m_iDroppedRequest > 5)
+      //if (m_iDroppedRequest > 5)
+      if (m_iDroppedRequest > 15)
       {
-        m_iDroppedRequest--; //decrease so we only drop half the frames
+        //m_iDroppedRequest--; //decrease so we only drop half the frames
+        m_iDroppedRequest = m_iDroppedRequest - 2; //temporary experiment to throttle this kicking in
         return result | EOS_DROPPED;
       }
       m_iDroppedRequest++;
@@ -1189,7 +1275,8 @@ CLog::Log(LOGDEBUG, "ASB: OutputPicture pts: %f", pts);
     m_iDroppedRequest = 0;
   }
 //ASB disable dropping
-  m_iLateFrames = 0;
+//m_iLateFrames = 0;
+//m_iDroppedRequest = 0;
 
 
   if( m_speed < 0 )
@@ -1260,12 +1347,17 @@ CLog::Log(LOGDEBUG, "ASB: OutputPicture pts: %f", pts);
   // post processing before FlipPage() is called.)
   g_renderManager.ReleaseImage(index);
 
+int64_t t3 = CurrentHostCounter();
+CLog::Log(LOGDEBUG, "ASB: OutputPicture preflip now: %"PRId64" pts: %f iClockSleep: %f iCurrentClock + iSleepTime: %f", t3, pts, iClockSleep, iCurrentClock + iSleepTime);
   if (pPicture->format == DVDVideoPicture::FMT_VDPAU || pPicture->format == DVDVideoPicture::FMT_VDPAU_420)
   {
     g_renderManager.FlipPage(CThread::m_bStop, (iCurrentClock + iSleepTime) / DVD_TIME_BASE, index, mDisplayField, true);
   }
   else
     g_renderManager.FlipPage(CThread::m_bStop, (iCurrentClock + iSleepTime) / DVD_TIME_BASE, index, mDisplayField);
+int64_t t4 = CurrentHostCounter();
+op_fintime = t4;
+     // CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo start time: %"PRId64" endtime: %"PRId64" configure dur: %"PRId64" started dur: %"PRId64" Wait: %"PRId64" Image: %"PRId64" Flip: %"PRId64" TOTAL: %"PRId64"", tminus1, t4, t0 - tminus1, t1 - t0, t2 - t1, t3 - t2, t4 - t3, t4 - tminus1);
 
   return result;
 #else

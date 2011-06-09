@@ -128,7 +128,11 @@ protected:
   double m_FlipTimeStamp; // time stamp of last flippage. used to play at a forced framerate
 
   int m_iLateFrames;
-  int m_iDroppedFrames;
+  int m_iDroppedFrames; //frames dropped by some method
+  int m_iOutputDroppedFrames; //frames dropped at output before being presented to render manager
+  int m_iDecoderDroppedFrames; //frames dropped inside decoder
+  int m_iDecoderOutputDroppedFrames; //frames dropped just after the output of the decoder
+
   int m_iDroppedRequest;
 
   void   ResetFrameRateCalc();
