@@ -1148,6 +1148,9 @@ void CDVDPlayer::Process()
       // if we are caching, start playing it again
       SetCaching(CACHESTATE_DONE);
 
+      //TODO: we ideally need a way to allow dvd player to still function at end of stream since we may be paused
+      //for example, so we should not exit until video player (for example) has presented the last picture from the stream
+
       // while players are still playing, keep going to allow seekbacks
       if(m_dvdPlayerAudio.m_messageQueue.GetDataSize() > 0
       || m_dvdPlayerVideo.m_messageQueue.GetDataSize() > 0)
@@ -1157,7 +1160,10 @@ void CDVDPlayer::Process()
       }
 
       if (!m_pInputStream->IsEOF())
+      {
         CLog::Log(LOGINFO, "%s - eof reading from demuxer", __FUNCTION__);
+        Sleep(1000); //temporary sleep to let things at least finish in each stream player - not needed if/once we only allow this all to happen after each player acknowledges that it has played and finished with the very last message packet given to it
+      }
 
       break;
     }
@@ -1292,10 +1298,14 @@ void CDVDPlayer::ProcessVideoData(CDemuxStream* pStream, DemuxPacket* pPacket)
 
   bool drop = false;
   if (CheckPlayerInit(m_CurrentVideo, DVDPLAYER_VIDEO))
+  {
     drop = true;
+  }
 
   if (CheckSceneSkip(m_CurrentVideo))
+  {
     drop = true;
+  }
 
   m_dvdPlayerVideo.SendMessage(new CDVDMsgDemuxerPacket(pPacket, drop));
 }
