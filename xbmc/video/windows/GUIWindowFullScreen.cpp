@@ -807,12 +807,14 @@ void CGUIWindowFullScreen::FrameMove()
 #endif
       int    missedvblanks;
       int    refreshrate;
+      double measuredrefreshrate;
       double clockspeed;
       CStdString strClock;
 
-      if (g_VideoReferenceClock.GetClockInfo(missedvblanks, clockspeed, refreshrate))
-        strClock.Format("S( refresh:%i missed:%i speed:%+.3f%% %s )"
+      if (g_VideoReferenceClock.GetClockInfo(missedvblanks, clockspeed, refreshrate, measuredrefreshrate))
+        strClock.Format("S(rr:%i mrr:%9.6f mvb:%i spdf:%+.3f%% %s)"
                        , refreshrate
+                       , measuredrefreshrate
                        , missedvblanks
                        , clockspeed - 100.0
                        , g_renderManager.GetVSyncState().c_str());
