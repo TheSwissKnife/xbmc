@@ -513,7 +513,7 @@ void CDVDPlayerVideo::Process()
       }
       else if( iDropped*frametime > DVD_MSEC_TO_TIME(100) && m_iNrOfPicturesNotToSkip == 0 )
       { // if we dropped too many pictures in a row, insert a forced picture
-        CLog::Log(LOGDEBUG, "ASB:CDVDPlayerVideo insert a forced picture");
+        CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo insert a forced picture");
         m_iNrOfPicturesNotToSkip = 1;
       }
 
@@ -1138,6 +1138,9 @@ int64_t tminus1 = CurrentHostCounter();
     m_output.color_format = pPicture->format;
     m_output.color_matrix = pPicture->color_matrix;
     m_output.color_range = pPicture->color_range;
+
+    if (!g_VideoReferenceClock.WaitStable(10000))
+      CLog::Log(LOGWARNING, "g_VideoReferenceClock didn't reach stability, continuing anyway");
   }
 
   double maxfps  = 60.0;
@@ -1151,16 +1154,6 @@ int64_t t0 = CurrentHostCounter();
   }
   maxfps = g_renderManager.GetMaximumFPS();
 
-//CLog::Log(LOGDEBUG, "ASB: OutputPicture pts: %f", pts);
-int64_t t1 = CurrentHostCounter();
-  if (pPicture->format == DVDVideoPicture::FMT_VDPAU || pPicture->format == DVDVideoPicture::FMT_VDPAU_420)
-  {
-    if (!g_renderManager.WaitVdpauFlip(100))
-    {
-      return EOS_DROPPED;
-    }
-  }
-int64_t t2 = CurrentHostCounter();
 
   // check if our output will limit speed
   if(m_fFrameRate * abs(m_speed) / DVD_PLAYSPEED_NORMAL > maxfps*0.9)
@@ -1172,6 +1165,17 @@ int64_t t2 = CurrentHostCounter();
 
   //try to calculate the framerate
   CalcFrameRate();
+
+//CLog::Log(LOGDEBUG, "ASB: OutputPicture pts: %f", pts);
+int64_t t1 = CurrentHostCounter();
+  if (pPicture->format == DVDVideoPicture::FMT_VDPAU || pPicture->format == DVDVideoPicture::FMT_VDPAU_420)
+  {
+    if (!g_renderManager.WaitVdpauFlip(100))
+    {
+      return EOS_DROPPED;
+    }
+  }
+int64_t t2 = CurrentHostCounter();
 
   // signal to clock what our framerate is, it may want to adjust it's
   // speed to better match with our video renderer's output speed
