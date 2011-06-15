@@ -878,7 +878,8 @@ void CVideoReferenceClock::VblankHandler(int64_t nowtime, double fps)
     m_RefreshRate = RefreshRate;
     if (m_UseVblank) m_ClockTickInterval = m_ClockSpeed / m_RefreshRate * m_SystemFrequency; 
   }
-  m_LastRefreshTime = m_CurrTime;
+  //m_LastRefreshTime = m_CurrTime;
+  m_LastRefreshTime = CurrentHostCounter();
 
   //calculate how many vblanks happened
   VBlankTime = (double)(nowtime - m_LastVBlankTime) / (double)m_SystemFrequency;
@@ -939,6 +940,9 @@ int CVideoReferenceClock::CorrectVBlankTracking(int64_t* measuredTime)
        int64_t lm_SystemFrequency = m_SystemFrequency;
        int lm_VblankSampleConfidence = m_VblankSampleConfidence;
        int64_t lm_PVblankInterval = m_PVblankInterval;
+       //if m_RefreshChanged value is 1 then reference clock has been told to expect a refresh rate change
+       //if m_RefreshChanged value is 2 then reference clock is now looking for a refresh rate change event
+       int lm_RefreshChanged = m_RefreshChanged; 
        SingleLock.Leave();
 
        //int64_t Now = CurrentHostCounter();
@@ -983,7 +987,7 @@ int CVideoReferenceClock::CorrectVBlankTracking(int64_t* measuredTime)
        //   supposed to be within 0.1% of an integer and clocks should not be too inaccurate)
        int64_t pvblank_interval_estimate = lm_SystemFrequency / lm_RefreshRate;
 
-       if ( lm_PreviousRefreshRate != (int)lm_RefreshRate )  // reset our sample set if refreshrate changes
+       if ( lm_PreviousRefreshRate != (int)lm_RefreshRate || lm_RefreshChanged > 0)  // reset our sample set if refreshrate changes are expected
        {
           m_SampledVblankCount = 0;
           m_SafeSample = 0;
@@ -1455,21 +1459,26 @@ double CVideoReferenceClock::GetSpeed()
 bool CVideoReferenceClock::UpdateRefreshrate(bool Forced /*= false*/)
 {
   //if the graphicscontext signaled that the refreshrate changed, we check it about one second later
+  if (m_RefreshChanged == 1)
+     m_Stable.Reset(); //we should consider the clock as unstable now
   if (m_RefreshChanged == 1 && !Forced)
   {
-    m_LastRefreshTime = m_CurrTime;
+    //m_LastRefreshTime = m_CurrTime;
+    m_LastRefreshTime = CurrentHostCounter(); //can't trust m_CurrTime during refresh rate changes
     m_RefreshChanged = 2;
     return false;
   }
 
   //update the refreshrate about once a second, or update immediately if a forced update is required
-  if (m_CurrTime - m_LastRefreshTime < m_SystemFrequency && !Forced)
+  //if (m_CurrTime - m_LastRefreshTime < m_SystemFrequency && !Forced)
+  if (CurrentHostCounter() - m_LastRefreshTime < m_SystemFrequency / 2 && !Forced)
     return false;
 
   if (Forced)
     m_LastRefreshTime = 0;
   else
-    m_LastRefreshTime = m_CurrTime;
+    //m_LastRefreshTime = m_CurrTime;
+    m_LastRefreshTime = CurrentHostCounter(); //can't trust m_CurrTime during refresh rate changes
 
 #if defined(HAS_GLX) && defined(HAS_XRANDR)
 
@@ -1478,6 +1487,7 @@ bool CVideoReferenceClock::UpdateRefreshrate(bool Forced /*= false*/)
   XEvent Event;
   while (XCheckTypedEvent(m_Dpy, m_RREventBase + RRScreenChangeNotify, &Event))
   {
+    CLog::Log(LOGDEBUG, "CVideoReferenceClock: Checking RandR event now: %"PRId64"", CurrentHostCounter());
     if (Event.type == m_RREventBase + RRScreenChangeNotify)
     {
       CLog::Log(LOGDEBUG, "CVideoReferenceClock: Received RandR event %i", Event.type);
