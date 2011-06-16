@@ -253,6 +253,12 @@ bool CLinuxRendererGL::ValidateRenderTarget()
 
 bool CLinuxRendererGL::Configure(unsigned int width, unsigned int height, unsigned int d_width, unsigned int d_height, float fps, unsigned flags)
 {
+  RESOLUTION prev_resolution = m_resolution;
+  unsigned int prev_sourceWidth = m_sourceWidth;
+  unsigned int prev_sourceHeight = m_sourceHeight;
+  float prev_sourceFrameRatio = m_sourceFrameRatio;
+  unsigned prev_iFlags = m_iFlags;
+
   m_sourceWidth = width;
   m_sourceHeight = height;
   m_fps = fps;
@@ -267,8 +273,19 @@ bool CLinuxRendererGL::Configure(unsigned int width, unsigned int height, unsign
   ManageDisplay();
 
   m_bConfigured = true;
-  m_bImageReady = false;
   m_scalingMethodGui = (ESCALINGMETHOD)-1;
+
+  // if our resolution was not changed by ChooseBestResolution() and frame ratio not changed by CalculateFrameAspectRatio()
+  // and source width and height have not changed then don't unconfigure
+  if ((prev_resolution == m_resolution) && (prev_sourceFrameRatio == m_sourceFrameRatio) && 
+      (prev_sourceHeight == m_sourceHeight) && (prev_sourceWidth == m_sourceWidth) &&
+      ((prev_iFlags | CONF_FLAGS_FULLSCREEN) == (m_iFlags | CONF_FLAGS_FULLSCREEN))) 
+  {
+     CLog::Log(LOGDEBUG, "CLinuxRendererGL::Configure fps-only change with no resolution change, no need to unconfigure");
+     return true;
+  }
+
+  m_bImageReady = false;
 
   // Ensure that textures are recreated and rendering starts only after the 1st
   // frame is loaded after every call to Configure().
