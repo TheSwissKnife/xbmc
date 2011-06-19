@@ -310,7 +310,6 @@ protected:
   bool m_binterlacedFrame;
   bool m_bNormalSpeed;
   int m_dropCount;
-  bool hasVdpauGlInterop;
   volatile bool glInteropFinish;
   bool m_bsurfaceMapped;
   bool m_dropState;
