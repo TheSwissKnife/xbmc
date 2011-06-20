@@ -1054,7 +1054,7 @@ bool CVDPAU::ConfigOutputMethod(AVCodecContext *avctx, AVFrame *pFrame)
 
     int tmpMaxOutputSurfaces = NUM_OUTPUT_SURFACES;
     if (!g_guiSettings.GetBool("videoplayer.usevdpauinteroprgb"))
-      tmpMaxOutputSurfaces = 4;
+      tmpMaxOutputSurfaces = g_advancedSettings.m_videoVDPAUnumOutSurfacesPixmap;
 
     // Creation of outputSurfaces
     for (int i = 0; i < NUM_OUTPUT_SURFACES && i < tmpMaxOutputSurfaces; i++)
