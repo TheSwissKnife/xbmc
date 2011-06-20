@@ -99,6 +99,7 @@ class CAdvancedSettings
     int m_videoPercentSeekBackwardBig;
     CStdString m_videoPPFFmpegDeint;
     CStdString m_videoPPFFmpegPostProc;
+    int m_videoVDPAUnumOutSurfacesPixmap;
     int m_videoVDPAUdeintHD;
     int m_videoVDPAUdeintSD;
     int m_videoVDPAUmaxHeight;
