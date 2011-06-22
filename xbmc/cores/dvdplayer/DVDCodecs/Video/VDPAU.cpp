@@ -384,6 +384,18 @@ bool CVDPAU::MakePixmap(int index, int width, int height)
   return true;
 }
 
+bool CVDPAU::IsBufferValid()
+{
+  if (recover)
+     return false;
+
+  CSingleLock lock(m_flipSec);
+  if (!m_flipBuffer[m_flipBufferIdx])
+    return false;
+
+  return true;
+}
+
 bool CVDPAU::SetTexture(int plane, int field)
 {
   m_glTexture = 0;
