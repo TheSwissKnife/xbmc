@@ -1083,6 +1083,16 @@ void CLinuxRendererGL::UnInit()
 
 void CLinuxRendererGL::Render(DWORD flags, int renderBuffer)
 {
+#ifdef HAVE_LIBVDPAU
+  CVDPAU   *vdpau = m_buffers[renderBuffer].vdpau;
+  if (vdpau)
+    if (!vdpau->IsBufferValid())
+    {
+      SetEvent(m_eventTexturesDone[renderBuffer]);
+      return;
+    }
+#endif
+
   // obtain current field, if interlaced
   if( flags & RENDER_FLAG_TOP)
     m_currentField = FIELD_TOP;
