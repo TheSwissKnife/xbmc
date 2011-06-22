@@ -92,6 +92,7 @@ public:
 
   void ReleasePixmap();
   void BindPixmap();
+  bool IsBufferValid();
 
   PFNGLXBINDTEXIMAGEEXTPROC    glXBindTexImageEXT;
   PFNGLXRELEASETEXIMAGEEXTPROC glXReleaseTexImageEXT;
