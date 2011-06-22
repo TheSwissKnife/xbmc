@@ -140,7 +140,7 @@ public:
   void SetSharpness();
   void SetDeintSkipChroma();
   void SetDeinterlacing();
-  void SetDeinterlacingOff();
+  void PostProcOff();
   EINTERLACEMETHOD GetDeinterlacingMethod(bool log = false);
   void SetHWUpscaling();
 
@@ -148,6 +148,7 @@ public:
   volatile bool  recover;
   vdpau_render_state *past[2], *current, *future[2];
   int        tmpDeint;
+  bool       tmpPostProc;
   float      tmpNoiseReduction, tmpSharpness;
   float      tmpBrightness, tmpContrast;
   int        OutWidth, OutHeight;
@@ -309,11 +310,11 @@ protected:
   CEvent m_msgSignal;
   bool m_bVdpauDeinterlacing;
   bool m_binterlacedFrame;
-  bool m_bNormalSpeed;
   int m_dropCount;
   volatile bool glInteropFinish;
   bool m_bsurfaceMapped;
   bool m_dropState;
+  bool m_bPostProc;
 
   enum VDPAUOutputMethod
   {

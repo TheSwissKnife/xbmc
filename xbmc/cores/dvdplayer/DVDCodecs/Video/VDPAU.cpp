@@ -510,6 +510,7 @@ void CVDPAU::CheckFeatures()
       tmpNoiseReduction = 0;
       tmpSharpness = 0;
       tmpDeint = 0;
+      tmpPostProc = true;
 
       VdpStatus vdp_st = VDP_STATUS_ERROR;
       vdp_st = vdp_video_mixer_create(vdp_device,
@@ -545,6 +546,18 @@ void CVDPAU::CheckFeatures()
     {
       tmpDeint = g_settings.m_currentVideoSettings.m_InterlaceMethod;
       SetDeinterlacing();
+    }
+    if (tmpPostProc != m_bPostProc)
+    {
+      if (m_bPostProc)
+      {
+        SetNoiseReduction();
+        SetSharpness();
+        SetDeinterlacing();
+      }
+      else
+        PostProcOff();
+      tmpPostProc = m_bPostProc;
     }
   }
 }
@@ -763,7 +776,7 @@ void CVDPAU::SetDeinterlacing()
   SetDeintSkipChroma();
 }
 
-void CVDPAU::SetDeinterlacingOff()
+void CVDPAU::PostProcOff()
 {
   VdpStatus vdp_st;
 
@@ -772,11 +785,29 @@ void CVDPAU::SetDeinterlacingOff()
 
   VdpVideoMixerFeature feature[] = { VDP_VIDEO_MIXER_FEATURE_DEINTERLACE_TEMPORAL,
                                      VDP_VIDEO_MIXER_FEATURE_DEINTERLACE_TEMPORAL_SPATIAL,
-                                     VDP_VIDEO_MIXER_FEATURE_INVERSE_TELECINE };
+                                     VDP_VIDEO_MIXER_FEATURE_INVERSE_TELECINE};
 
   VdpBool enabled[]={0,0,0};
   vdp_st = vdp_video_mixer_set_feature_enables(videoMixer, ARSIZE(feature), feature, enabled);
   CheckStatus(vdp_st, __LINE__);
+
+  if(Supports(VDP_VIDEO_MIXER_FEATURE_NOISE_REDUCTION))
+  {
+    VdpVideoMixerFeature feature[] = { VDP_VIDEO_MIXER_FEATURE_NOISE_REDUCTION};
+
+    VdpBool enabled[]={0};
+    vdp_st = vdp_video_mixer_set_feature_enables(videoMixer, ARSIZE(feature), feature, enabled);
+    CheckStatus(vdp_st, __LINE__);
+  }
+
+  if(Supports(VDP_VIDEO_MIXER_FEATURE_SHARPNESS))
+  {
+    VdpVideoMixerFeature feature[] = { VDP_VIDEO_MIXER_FEATURE_SHARPNESS};
+
+    VdpBool enabled[]={0};
+    vdp_st = vdp_video_mixer_set_feature_enables(videoMixer, ARSIZE(feature), feature, enabled);
+    CheckStatus(vdp_st, __LINE__);
+  }
 }
 
 
@@ -998,7 +1029,7 @@ bool CVDPAU::ConfigVDPAU(AVCodecContext* avctx, int ref_frames)
   m_vdpauOutputMethod = OUTPUT_NONE;
 
   vdpauConfigured = true;
-  m_bNormalSpeed = true;
+  m_bPostProc = true;
   m_binterlacedFrame = false;
   return true;
 }
@@ -1496,6 +1527,8 @@ int CVDPAU::Decode(AVCodecContext *avctx, AVFrame *pFrame)
       memset(&outPic->DVDPic, 0, sizeof(DVDVideoPicture));
       ((CDVDVideoCodecFFmpeg*)avctx->opaque)->GetPictureCommon(&outPic->DVDPic);
       outPic->render = render;
+      if (outPic->DVDPic.iFlags & DVP_FLAG_DROPREQUESTED)
+        outPic->DVDPic.iFlags |= DVP_FLAG_DROPPED;
       m_usedOutPic.push_back(outPic);
       lock.Leave();
       return VC_PICTURE | VC_BUFFER;
@@ -1506,6 +1539,12 @@ int CVDPAU::Decode(AVCodecContext *avctx, AVFrame *pFrame)
     memset(&msg.DVDPic, 0, sizeof(DVDVideoPicture));
     ((CDVDVideoCodecFFmpeg*)avctx->opaque)->GetPictureCommon(&msg.DVDPic);
     msg.outRectVid = outRectVid;
+
+    //check if we should switch off post processing
+    if (msg.DVDPic.iFlags & DVP_FLAG_NOPOSTPROC)
+      m_bPostProc = false;
+    else
+      m_bPostProc = true;
 
     { CSingleLock lock(m_mixerSec);
       m_mixerMessages.push(msg);
@@ -1650,13 +1689,21 @@ bool CVDPAU::GetPicture(AVCodecContext* avctx, AVFrame* frame, DVDVideoPicture* 
   if (m_presentPicture->render)
   {
     picture->format = DVDVideoPicture::FMT_VDPAU_420;
-    if (!m_bNormalSpeed)
-      picture->iFlags &= DVP_FLAG_DROPPED;
+    // tell renderer not to do de-interlacing when using OUTPUT_GL_INTEROP_YUV
+    // and no post processing is desired
+    if (!m_bPostProc)
+      picture->iFlags &= ~(DVP_FLAG_TOP_FIELD_FIRST |
+                           DVP_FLAG_REPEAT_TOP_FIELD |
+                           DVP_FLAG_INTERLACED);
   }
   else
   {
     picture->format = DVDVideoPicture::FMT_VDPAU;
-    picture->iFlags &= DVP_FLAG_DROPPED;
+    // when using OUTPUT_GL_INTEROP_RGB or OUTPUT_PIXMAP no de-interlacing
+    // should be done by renderer. VDPAU doesn't expose fields using those methods
+    picture->iFlags &= ~(DVP_FLAG_TOP_FIELD_FIRST |
+                         DVP_FLAG_REPEAT_TOP_FIELD |
+                         DVP_FLAG_INTERLACED);
   }
 
   picture->iWidth = OutWidth;
@@ -2009,7 +2056,7 @@ void CVDPAU::Process()
       }
 
       // skip mixer step if requested
-      if (cmd & MIXER_CMD_HURRY)
+      if (cmd & MIXER_CMD_HURRY || (outPic->DVDPic.iFlags & DVP_FLAG_DROPREQUESTED))
         outPic->DVDPic.iFlags |= DVP_FLAG_DROPPED;
       else
       {

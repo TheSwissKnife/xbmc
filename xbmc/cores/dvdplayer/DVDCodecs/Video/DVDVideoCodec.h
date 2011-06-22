@@ -123,6 +123,8 @@ struct DVDVideoUserData
 
 #define DVP_FLAG_NOSKIP             0x00000010 // indicate this picture should never be dropped
 #define DVP_FLAG_DROPPED            0x00000020 // indicate that this picture has been dropped in decoder stage, will have no data
+#define DVP_FLAG_DROPREQUESTED      0x00000040 // indicate that this picture was requested to have been dropped in decoder stage
+#define DVP_FLAG_NOPOSTPROC         0x00000080 // indicate that this picture was requested not to have any non-essential post processing performed on it
 
 // DVP_FLAG 0x00000100 - 0x00000f00 is in use by libmpeg2!
 
