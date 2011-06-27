@@ -1492,7 +1492,7 @@ int CVDPAU::Decode(AVCodecContext *avctx, AVFrame *pFrame)
   if(pFrame)
   { // we have a new frame from decoder
 
-    vdpau_render_state * render = (vdpau_render_state*)pFrame->data[2];
+    vdpau_render_state * render = (vdpau_render_state*)pFrame->data[0];
     if(!render) // old style ffmpeg gave data on plane 0
       render = (vdpau_render_state*)pFrame->data[0];
     if(!render)

@@ -3354,7 +3354,10 @@ void CLinuxRendererGL::UnBindPbo(YUVBUFFER& buff)
 void CLinuxRendererGL::AddProcessor(CVDPAU* vdpau)
 {
   YUVBUFFER &buf = m_buffers[NextYV12Texture()];
-  SAFE_RELEASE(buf.vdpau);
+  CVDPAU *tmp = buf.vdpau;
+  buf.vdpau = 0;
+  if (tmp) tmp->Release();
+//  SAFE_RELEASE(buf.vdpau);
   buf.vdpau = (CVDPAU*)vdpau->Acquire();
 }
 #endif
