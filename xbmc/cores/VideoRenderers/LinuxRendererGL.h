@@ -308,6 +308,7 @@ protected:
   bool  m_nonLinStretch;
   bool  m_nonLinStretchGui;
   float m_pixelRatio;
+  CCriticalSection m_releaseSection;
 };
 
 

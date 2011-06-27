@@ -2248,6 +2248,7 @@ void CLinuxRendererGL::DeleteVDPAUTexture(int index)
 #ifdef HAVE_LIBVDPAU
   YUVPLANE &plane = m_buffers[index].fields[0][0];
 
+  CSingleLock lock(m_releaseSection);
   SAFE_RELEASE(m_buffers[index].vdpau);
 
   if(plane.id && glIsTexture(plane.id))
@@ -2322,6 +2323,7 @@ void CLinuxRendererGL::DeleteVDPAUTexture420(int index)
 #ifdef HAVE_LIBVDPAU
   YUVPLANE &plane = m_buffers[index].fields[0][0];
 
+  CSingleLock lock(m_releaseSection);
   SAFE_RELEASE(m_buffers[index].vdpau);
 
   if(plane.id && glIsTexture(plane.id))
@@ -3354,10 +3356,9 @@ void CLinuxRendererGL::UnBindPbo(YUVBUFFER& buff)
 void CLinuxRendererGL::AddProcessor(CVDPAU* vdpau)
 {
   YUVBUFFER &buf = m_buffers[NextYV12Texture()];
-  CVDPAU *tmp = buf.vdpau;
-  buf.vdpau = 0;
-  if (tmp) tmp->Release();
-//  SAFE_RELEASE(buf.vdpau);
+
+  CSingleLock lock(m_releaseSection);
+  SAFE_RELEASE(buf.vdpau);
   buf.vdpau = (CVDPAU*)vdpau->Acquire();
 }
 #endif
