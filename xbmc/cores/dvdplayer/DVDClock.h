@@ -42,7 +42,7 @@ public:
   CDVDClock();
   ~CDVDClock();
 
-  double GetClock();
+  double GetClock(double* AbsoluteClock = NULL);
 
   void Discontinuity(double currentPts = 0LL);
 
@@ -50,6 +50,7 @@ public:
   void Pause();
   void Resume();
   void SetSpeed(int iSpeed);
+  bool IsPaused();
 
   /* tells clock at what framerate video is, to  *
    * allow it to adjust speed for a better match */
@@ -58,8 +59,9 @@ public:
   bool   SetMaxSpeedAdjust(double speed);
 
   static double GetAbsoluteClock();
+  static double GetNextAbsoluteClockTick(double target = NULL);
   static double GetFrequency() { return (double)m_systemFrequency ; }
-  static double WaitAbsoluteClock(double target);
+  static double WaitAbsoluteClock(double target, double* InterpolatedClock = NULL, int64_t* WaitedSysTime = NULL);
 
   //when m_ismasterclock is true, CDVDPlayerAudio synchronizes the clock to the audio stream
   //when it's false, CDVDPlayerAudio synchronizes the audio stream to the clock
