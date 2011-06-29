@@ -168,6 +168,8 @@ bool CDVDVideoCodecFFmpeg::Open(CDVDStreamInfo &hints, CDVDCodecOptions &options
 
   pCodec = NULL;
 
+  ResetState();
+
 #ifdef HAVE_LIBVDPAU
   if(g_guiSettings.GetBool("videoplayer.usevdpau") && !m_bSoftware)
   {
@@ -212,6 +214,7 @@ bool CDVDVideoCodecFFmpeg::Open(CDVDStreamInfo &hints, CDVDCodecOptions &options
   m_pCodecContext->opaque = (void*)this;
   m_pCodecContext->debug_mv = 0;
   m_pCodecContext->debug = 0;
+
   m_pCodecContext->workaround_bugs = FF_BUG_AUTODETECT;
   m_pCodecContext->get_format = GetFormat;
   m_pCodecContext->codec_tag = hints.codec_tag;
@@ -315,42 +318,128 @@ void CDVDVideoCodecFFmpeg::Dispose()
   m_dllAvUtil.Unload();
 }
 
-void CDVDVideoCodecFFmpeg::SetDropState(bool bDrop)
+bool CDVDVideoCodecFFmpeg::AllowDecoderDrop()
+{
+  if (!m_bDecodingStable)
+    return false;
+  // If we are interlaced and subtle dropping is requested by player and hardware control layer is happy to drop
+  if (SubtleHardwareDropping())
+     return false;
+
+  return true;
+}
+
+bool CDVDVideoCodecFFmpeg::SubtleHardwareDropping()
+{
+  return (m_pHardware && m_bDropRequested && m_bInterlacedMode && HintDropSubtle() && 
+          (!HintNoPresent()) && m_pHardware->AllowFrameDropping());
+}
+
+bool CDVDVideoCodecFFmpeg::HintDropSubtle()
+{
+   return (m_iDecoderHint & VC_HINT_DROPSUBTLE);
+}
+
+bool CDVDVideoCodecFFmpeg::HintDropUrgent()
+{
+   return (m_iDecoderHint & VC_HINT_DROPURGENT);
+}
+
+bool CDVDVideoCodecFFmpeg::HintHurryUp()
+{
+   return (m_iDecoderHint & VC_HINT_HURRYUP);
+}
+
+bool CDVDVideoCodecFFmpeg::HintNoPostProc()
+{
+   return (m_iDecoderHint & VC_HINT_NOPOSTPROC);
+}
+
+bool CDVDVideoCodecFFmpeg::HintNoPresent()
+{
+   return (m_iDecoderHint & VC_HINT_NOPRESENT);
+}
+
+void CDVDVideoCodecFFmpeg::ResetHintNoPresent()
+{
+   m_iDecoderHint &= ~VC_HINT_NOPRESENT;
+}
+
+bool CDVDVideoCodecFFmpeg::SetDecoderHint(int iDecoderHint)
 {
   if( m_pCodecContext )
   {
-    // i don't know exactly how high this should be set
-    // couldn't find any good docs on it. think it varies
-    // from codec to codec on what it does
+    m_iDecoderHint = iDecoderHint;
+    return true;
+  }
+  else
+  {
+    m_iDecoderHint = 0;
+    return false;
+  }
+}
 
-    //  2 seem to be to high.. it causes video to be ruined on following images
-    if( bDrop )
-    {
-      if (m_pHardware && m_pHardware->AllowFrameDropping())
-      {
-        m_pHardware->SetDropState(true);
-      }
-      else
-      {
-        // TODO: 'hurry_up' has been deprecated in favor of the skip_* variables
-        // Use those instead.
+void CDVDVideoCodecFFmpeg::SetNextDropState(bool bDrop)
+{
+   m_bDropNextRequested = bDrop;
+}
 
-        //m_pCodecContext->hurry_up = 1;
-        m_pCodecContext->skip_frame = AVDISCARD_NONREF;
-        m_pCodecContext->skip_idct = AVDISCARD_NONREF;
-        m_pCodecContext->skip_loop_filter = AVDISCARD_NONREF;
-      }
-    }
-    else
-    {
-      //m_pCodecContext->hurry_up = 0;
-      m_pCodecContext->skip_frame = AVDISCARD_DEFAULT;
-      m_pCodecContext->skip_idct = AVDISCARD_DEFAULT;
-      m_pCodecContext->skip_loop_filter = AVDISCARD_DEFAULT;
+void CDVDVideoCodecFFmpeg::ResetDropState()
+{
+   // reset the drop request state vars except for m_bDropNextRequested
+   m_bDecoderDropRequested = false;
+   m_bHardwareDropRequested = false;
+   m_bDropRequested = false;
+}
 
-      if (m_pHardware)
-         m_pHardware->SetDropState(false);
-    }
+void CDVDVideoCodecFFmpeg::SetDropState(bool bDrop)
+{
+   m_bDropRequested = bDrop | m_bDropNextRequested;
+}
+
+void CDVDVideoCodecFFmpeg::SetDropMethod(bool bDrop, bool bInputPacket /*= true */)
+{
+  if (m_pCodecContext)
+  {
+     m_bDecoderDropRequested = false;
+     m_bHardwareDropRequested = false;
+     m_bDropRequested = false;
+     AVDiscard loopFilterDefault = AVDISCARD_DEFAULT;
+     if (g_advancedSettings.m_iSkipLoopFilter != 0)
+        loopFilterDefault = (AVDiscard)g_advancedSettings.m_iSkipLoopFilter;
+     m_pCodecContext->skip_frame = AVDISCARD_DEFAULT;
+     m_pCodecContext->skip_idct = AVDISCARD_DEFAULT;
+     m_pCodecContext->skip_loop_filter = loopFilterDefault;
+        
+     if (bDrop)
+     {
+        m_bDropRequested = true;
+        // drop in decoder if considered possible, stable, not hardware subtle dropping more appropriate, 
+        // and we have input packet
+        if (AllowDecoderDrop() && bInputPacket)
+        {
+           m_bDecoderDropRequested = true;
+           if (HintDropUrgent())
+           {
+              m_pCodecContext->skip_frame = AVDISCARD_BIDIR; //skip frame for non-reference and b-frame
+              m_pCodecContext->skip_idct = AVDISCARD_NONREF; //skip dequant for non-reference frames
+              m_pCodecContext->skip_loop_filter = AVDISCARD_NONREF; //skip deblocking filter for non-reference frames
+           }
+           else
+              m_pCodecContext->skip_frame = AVDISCARD_NONREF;
+        } 
+        else
+        {
+           //only set drop state in hardware if we are subtle dropping else we could drop multiple times
+           //- note that subtle dropping can and will result in earier data being dropped
+           if (SubtleHardwareDropping())
+           {
+              m_bHardwareDropRequested = true;
+           }
+        }
+     }
+     if (m_pHardware)
+        m_pHardware->SetDropState(m_bHardwareDropRequested);
   }
 }
 
@@ -377,12 +466,49 @@ static double pts_itod(int64_t pts)
 int CDVDVideoCodecFFmpeg::Decode(BYTE* pData, int iSize, double dts, double pts)
 {
   int iGotPicture = 0, len = 0;
+  int result = 0; 
+  int iDecodeResState = 0; // store state of dropping or decoding to be combined with result
+  bool bInputData = false;
+  // flag whether we want to drop the frame(s) associated with an input packet (not neccesarily via the decoder)
+  bool bDropRequested = false;
+  // flag whether we want to request a drop via decoder
+  bool bDecoderDropRequested = false;
+  bool bDrain = false; // whether to try to drain buffered data
 
   if (!m_pCodecContext)
     return VC_ERROR;
 
-  if(pData)
-    m_iLastKeyframe++;
+  if (iSize == -1 || (HintHurryUp()))
+  {
+     if (iSize == -1)
+       iSize = 0;
+     bDrain = true;
+  }
+
+  if (pData && iSize > 0)
+  {
+     bInputData = true;
+     m_iLastKeyframe++;
+  }
+
+  SetDropMethod(m_bDropRequested, bInputData);
+  if (m_bDropRequested && (!m_bHardwareDropRequested)) 
+     bDropRequested = true;
+
+  // workaround current bug in ffmpeg : 
+  // for first field of field based input a drop request using skip_frame causes output corruption 
+  // - so we postpone drop request until next time around (second field)
+  if (m_bDecoderDropRequested && m_bFieldInputMode && (!m_bExpectingDecodedFrame))
+  {
+     SetDropMethod(false);
+     SetNextDropState(true);
+  }
+  else
+     SetNextDropState(false);
+
+  bDecoderDropRequested = m_bDecoderDropRequested;
+
+  ResetDropState(); //reset state now we have method so we don't linger with drop request state at next call
 
   shared_ptr<CSingleLock> lock;
   if(m_pHardware)
@@ -391,18 +517,33 @@ int CDVDVideoCodecFFmpeg::Decode(BYTE* pData, int iSize, double dts, double pts)
     if(section)
       lock = shared_ptr<CSingleLock>(new CSingleLock(*section));
 
-    int result;
     if(pData)
+    {
       result = m_pHardware->Check(m_pCodecContext);
+      if (result & VC_FLUSHED)
+         Reset();
+      if (result)
+        return result;
+    }
     else
-      result = m_pHardware->Decode(m_pCodecContext, NULL);
-
-    if(result)
-      return result;
+    {
+      // this can be used to pick up outstanding pictures when extra data has not been asked for
+      // eg missed pictures due to de-interlace double up or having missed ones that took too long
+      result = m_pHardware->Decode(m_pCodecContext, NULL, false);
+      if (result & VC_FLUSHED)
+      {
+         Reset();
+         return result;
+      }
+      if (result & (VC_PICTURE | VC_ERROR))
+         return result;
+      // else assume we should try to squeeze more data out of decoder
+    }
   }
 
   m_dts = dts;
-  m_pCodecContext->reordered_opaque = pts_dtoi(pts);
+  int64_t pts_opaque = pts_dtoi(pts);
+  m_pCodecContext->reordered_opaque = pts_opaque;
 
   AVPacket avpkt;
   m_dllAvCodec.av_init_packet(&avpkt);
@@ -411,7 +552,24 @@ int CDVDVideoCodecFFmpeg::Decode(BYTE* pData, int iSize, double dts, double pts)
   /* We lie, but this flag is only used by pngdec.c.
    * Setting it correctly would allow CorePNG decoding. */
   avpkt.flags = AV_PKT_FLAG_KEY;
+
+  // if we got no packet input data and we have not been asked to try to empty the decoder then return VC_BUFFER
+  if ((!bInputData) && (!bDrain))
+     return VC_BUFFER;
+
+  if (bDecoderDropRequested)
+     m_iDecoderDropRequest++;
+  
   len = m_dllAvCodec.avcodec_decode_video2(m_pCodecContext, m_pFrame, &iGotPicture, &avpkt);
+
+  int iInputPktNum = m_iDecoderInputPktNumber;
+
+  if (bInputData)
+  {
+     //assume if we are given data that we have an input packet
+     RecordPacketInfoInHist(iInputPktNum, pts_opaque, bDropRequested, bDecoderDropRequested);
+     m_iDecoderInputPktNumber++; //increment for next 
+  }
 
   if(m_iLastKeyframe < m_pCodecContext->has_b_frames + 1)
     m_iLastKeyframe = m_pCodecContext->has_b_frames + 1;
@@ -422,18 +580,135 @@ int CDVDVideoCodecFFmpeg::Decode(BYTE* pData, int iSize, double dts, double pts)
     return VC_ERROR;
   }
 
-  if (len != iSize && m_pCodecContext->skip_frame != AVDISCARD_NONREF)
+  if (len != iSize && len != 0)
     CLog::Log(LOGWARNING, "%s - avcodec_decode_video didn't consume the full packet. size: %d, consumed: %d", __FUNCTION__, iSize, len);
 
-  if (!iGotPicture)
-    return VC_BUFFER;
+  // See if we dropped (using our best estimate since ffmpeg never exposes this).
+  //   ffmpeg may either drop the packet as we pass it in and return len == 0 or 
+  //   it may drop some decode call later, or it may not drop at all depsite being
+  //   requested to (eg if frame is reference). It is assumed that when a field based 
+  //   packet is requested to be dropped any drop that results will be a whole frame drop.
+  //   Note: with old hurry_up method different frames could be dropped from the one 
+  //   directly related to the input field/frame eg. have seen first field drop request
+  //   (presumably for non-droppable) that results in 2 different frames being dropped
+  //   either side of target frame.  During this dropping we see len == 0
+  //   returned for all those incoming packets.
 
-  if(m_pFrame->key_frame)
+  if (bInputData && len == 0 && m_bExpectingDecodedFrame)
   {
-    m_started = true;
-    m_iLastKeyframe = m_pCodecContext->has_b_frames + 1;
+     // instant input drop
+     iDecodeResState = VC_DROPPED;
+  }
+  else if (m_bExpectingDecodedFrame && (!iGotPicture))
+  {
+     // drop related to a request in the past
+     iDecodeResState = VC_DROPPED;
+  }
+  // count and categorise the decoder drops
+  if (iDecodeResState & VC_DROPPED)
+  {
+     if (m_bInterlacedMode)
+        iDecodeResState |= VC_DECODERBIFIELDDROP;
+     else
+        iDecodeResState |= VC_DECODERFRAMEDROP;
+     m_iDecoderDrop++;
+  }
+  else
+  {
+     //tell player no decoder drop (so that it cat can distinguish from decoders that do not inform)
+     iDecodeResState |= VC_NOTDECODERDROPPED;
   }
 
+  // Determine if next call should expect to get a decoded output frame
+  // don't expect a frame next time if we got a picture and are in field input mode, or we gave no input data
+  // this means we won't track drops very well during unstable state
+  if (!m_bDecodingStable)
+     m_bExpectingDecodedFrame = false;
+  else if (m_bFieldInputMode && iGotPicture) 
+     m_bExpectingDecodedFrame = false;
+  else if (!bInputData)
+  {
+     // could this possibly mess up things a little if we call with no input data more than once in a row?
+     m_bExpectingDecodedFrame = false;
+  }
+  else
+     m_bExpectingDecodedFrame = true;
+
+  if (iGotPicture)
+  {
+     iDecodeResState = VC_DECODED;
+     //count the output frames
+     m_iDecoderOutputFrameNumber++;
+
+     // now configure the decoder stability flag, TODO: perhaps should be in a function and threshold in header etc
+     // TODO: perhaps it should move to unstable at events like (consecutive NULL data in, interlaced change)
+     int threshold = 10; //10 == some small number of frames coming out of decoder since reset
+     if (m_iDecoderOutputFrameNumber >= threshold)
+     {
+        m_bDecodingStable = true;
+     }
+     // while we are not stable and thus not allowing dropping we are in a good position to watch
+     // if input is field based - revisit to detect cases where this goes wrong
+     if (!m_bDecodingStable) 
+     {
+        if (m_iDecoderInputPktNumber - m_iDecoderLastOutputPktNumber > 1)
+           m_bFieldInputMode = true;
+        else
+           m_bFieldInputMode = false;
+     }
+
+     m_iDecoderLastOutputPktNumber = m_iDecoderInputPktNumber;
+     // best way to estimate if frame claims to be interlaced
+     bool frame_interlace_flag = m_pFrame->interlaced_frame || m_pFrame->top_field_first;
+     if ((!m_bInterlacedMode) && frame_interlace_flag)
+     {
+        m_iInterlacedEnabledFrameNumber = m_iDecoderOutputFrameNumber;
+        m_bInterlacedMode = true;
+        CLog::Log(LOGNOTICE, "CDVDVideoCodecFFmpeg::Decode Interlaced flag enabled");
+     }
+     else if ((m_bInterlacedMode) && !(frame_interlace_flag) &&
+             (m_iDecoderOutputFrameNumber - m_iInterlacedEnabledFrameNumber >= 
+                g_advancedSettings.m_videoFFmpegInterlacedFlagLingerFrames))
+     {
+        // only reset to progressive after linger frames passed to deal with streams 
+        // that ffmpeg is unable to flag correctly at every frame
+        m_bInterlacedMode = false;
+        CLog::Log(LOGNOTICE, "CDVDVideoCodecFFmpeg::Decode Interlaced flag disabled");
+     }
+     m_pFrame->interlaced_frame = (int)m_bInterlacedMode; //force value for cases where it is not correct
+
+     if(m_pFrame->key_frame)
+     {
+        m_started = true;
+        // +1 extra for streams where there are advertised 2 keyframes in a row, 
+        // possibly buggy ffmpeg behaviour at beginning of decode (but without this 
+        // the frame we thought should be keyframe can end up not being so)
+        m_iLastKeyframe = m_pCodecContext->has_b_frames + 2;
+     }
+
+     // now look to find our output frame in input history buffer to grab any flags/hints etc
+     // to give to m_pHardware and player
+     SetFrameFlagsFromHist(iInputPktNum);
+  }
+  else // no picture 
+  {   
+    // return but allow hardware implementation to do some further processing if it wants (on any queued data)
+    if(m_pHardware && m_started)
+    {
+      // this may include giving us a picture that reached readiness from its queue 
+      // (but regardless set VC_BUFFER since we did not get a picture and we could end up not getting 
+      // any more pictures if this call is not trustworthy)
+      result = VC_BUFFER | m_pHardware->Decode(m_pCodecContext, NULL, bDrain);
+      if(result & VC_FLUSHED)
+         Reset();
+    }
+    else
+       result = VC_BUFFER; // assumption that "no picture" implies decoder wants another packet
+
+    return result | iDecodeResState;
+  }
+
+  // software conversion to YUV420P
   if(m_pCodecContext->pix_fmt != PIX_FMT_YUV420P
   && m_pCodecContext->pix_fmt != PIX_FMT_YUVJ420P
   && m_pHardware == NULL)
@@ -453,7 +728,7 @@ int CDVDVideoCodecFFmpeg::Decode(BYTE* pData, int iSize, double dts, double pts)
       {
         m_dllAvUtil.av_free(m_pConvertFrame);
         m_pConvertFrame = NULL;
-        return VC_ERROR;
+        return VC_ERROR | iDecodeResState;
       }
     }
 
@@ -465,7 +740,7 @@ int CDVDVideoCodecFFmpeg::Decode(BYTE* pData, int iSize, double dts, double pts)
     if(context == NULL)
     {
       CLog::Log(LOGERROR, "CDVDVideoCodecFFmpeg::Decode - unable to obtain sws context for w:%i, h:%i, pixfmt: %i", m_pCodecContext->width, m_pCodecContext->height, m_pCodecContext->pix_fmt);
-      return VC_ERROR;
+      return VC_ERROR | iDecodeResState;
     }
 
     m_dllSwScale.sws_scale(context
@@ -489,23 +764,137 @@ int CDVDVideoCodecFFmpeg::Decode(BYTE* pData, int iSize, double dts, double pts)
     }
   }
 
-  int result;
   if(m_pHardware)
-    result = m_pHardware->Decode(m_pCodecContext, m_pFrame);
+    result = m_pHardware->Decode(m_pCodecContext, m_pFrame, bDrain);
   else
     result = VC_PICTURE | VC_BUFFER;
 
   if(result & VC_FLUSHED)
     Reset();
 
-  return result;
+  return result | iDecodeResState;
+}
+
+void CDVDVideoCodecFFmpeg::RecordPacketInfoInHist(int iInputPktNum, int64_t pts_opaque, bool bDropRequested, bool bDecoderDropRequested)
+{
+  int idx = iInputPktNum % INPUT_HISTBUFNUM;
+  m_input_hist[idx].pts_opaque = pts_opaque;
+  int iFrameFlags = 0;
+  if (HintNoPostProc())
+     iFrameFlags |= DVP_FLAG_NOPOSTPROC;
+  if (HintNoPresent())
+     iFrameFlags |= DVP_FLAG_DROPPED; //must be dropped as soon as possible
+  ResetHintNoPresent(); //don't let 'no-present' linger now we have registered it for this packet
+  if (bDropRequested)
+     iFrameFlags |= DVP_FLAG_DROPREQUESTED; //mark as a targetted drop for output stages to utilise if required
+  m_input_hist[idx].flags = iFrameFlags;
+  m_input_hist[idx].drop = bDecoderDropRequested; //not same as bDropRequested
+  //our guess if this is a field based input that won't have a matching output
+  m_input_hist[idx].field_no_out = m_bFieldInputMode && m_bExpectingDecodedFrame;
+  m_input_hist[idx].input_pos = iInputPktNum;
+}
+
+void CDVDVideoCodecFFmpeg::SetFrameFlagsFromHist(int iInputPktNum)
+{
+  int64_t picture_pts_opaque = m_pFrame->reordered_opaque;
+
+  if (picture_pts_opaque != pts_dtoi(DVD_NOPTS_VALUE))
+  {
+     int bestmatch = -1;
+     for (int i = 0; i < INPUT_HISTBUFNUM; i++)
+     {
+        // Remember pts is not necessarily unique though we hope it is at least within a small timeframe
+        // Start search from current iInputPktNum moving backwards looking for best match
+        // - look for match closest to the position m_iMaxDecoderIODelay back with best 
+        //   options for drop, field_no_out (ie since we got a picture higher probability that 
+        //   output should be expected than not)
+        int idx = (INPUT_HISTBUFNUM + iInputPktNum - i) % INPUT_HISTBUFNUM;
+      
+        if (m_input_hist[idx].pts_opaque == picture_pts_opaque)
+        {
+           // we found a possible match
+           if (bestmatch == -1)
+              bestmatch = idx;
+           else if ((!m_input_hist[idx].drop) && (!m_input_hist[idx].field_no_out))
+              bestmatch = idx; // found a better match
+        }
+        if (i >= m_iMaxDecoderIODelay)
+        {
+           // update m_iMaxDecoderIODelay if we are not stable yet
+           if (!m_bDecodingStable)
+              m_iMaxDecoderIODelay = i;
+           if (bestmatch != -1)
+              break; //we have our best match
+        }
+     }
+     if (bestmatch != -1)
+     {
+        //log some debug if our match has data we don't really expect
+        int delay = iInputPktNum - m_input_hist[bestmatch].input_pos;
+        if ((m_input_hist[bestmatch].field_no_out) || (m_iMaxDecoderIODelay < delay) ||
+            (m_input_hist[bestmatch].input_pos > iInputPktNum))
+        {
+           CLog::Log(LOGDEBUG,"CDVDVideoCodecFFmpeg::SetFrameFlags() decoder history search matched on unexpected data pts: %f, field_no_out: %i, drop: %i, flags: %i, input_pos: %i, current input packet number: %i", 
+               pts_itod(m_input_hist[bestmatch].pts_opaque), (int)m_input_hist[bestmatch].field_no_out,
+               (int)m_input_hist[bestmatch].drop, m_input_hist[bestmatch].flags, 
+               m_input_hist[bestmatch].input_pos, iInputPktNum);
+           // if not more than 5 increase in io delay then adjust our maximum to it
+           if ((m_iMaxDecoderIODelay < delay) && (m_iMaxDecoderIODelay + 5 >= delay))
+           {
+              CLog::Log(LOGDEBUG,"CDVDVideoCodecFFmpeg::SetFrameFlags() decoder history search, increasing max delay to %i", delay); 
+              m_iMaxDecoderIODelay = delay;
+           }
+        }
+        // set our frame flags for GetPictureCommon()
+        m_iFrameFlags = m_input_hist[bestmatch].flags;
+        // if dropping in decoder is not working well mark as dropped to try to force subsequent stages to drop
+        // for the gain (ableit much lesser) that will offer
+        if (m_input_hist[bestmatch].drop &&
+            m_iDecoderDropRequest > 10 * m_iDecoderDrop && m_iDecoderDropRequest > 10)
+           m_iFrameFlags |= DVP_FLAG_DROPPED;
+
+     }
+     else // we couldn't find our pts!
+        CLog::Log(LOGWARNING,"CDVDVideoCodecFFmpeg::SetFrameFlags() decoder history search could not find a match for pts: %f", pts_itod(picture_pts_opaque));
+  }
+}
+
+void CDVDVideoCodecFFmpeg::ResetState()
+{
+  m_started = false;
+  m_iDecoderInputPktNumber = 0;
+  m_iDecoderOutputFrameNumber = 0;
+  m_iDecoderLastOutputPktNumber = 0;
+  m_iInterlacedEnabledFrameNumber = 0;
+  m_iDecoderDrop = 0;
+  m_iDecoderHint = 0;
+  m_bDropRequested = false;
+  m_bDecoderDropRequested = false;
+  m_bHardwareDropRequested = false;
+  m_bDropNextRequested = false;
+  m_iDecoderDropRequest = 0;
+  m_bDecodingStable = false;
+  m_bInterlacedMode = false;
+  m_bFieldInputMode = false;
+  m_iFrameFlags = 0;
+  m_iMaxDecoderIODelay = 0;
+  // reset the input history buffer
+  for (int i = 0; i < INPUT_HISTBUFNUM; i++)
+  {
+      m_input_hist[i].pts_opaque = DVD_NOPTS_VALUE;
+      m_input_hist[i].flags = 0;
+      m_input_hist[i].drop = false;
+      m_input_hist[i].field_no_out = false;
+      m_input_hist[i].input_pos = -1;
+  }
 }
 
 void CDVDVideoCodecFFmpeg::Reset()
 {
-  m_started = false;
   m_iLastKeyframe = m_pCodecContext->has_b_frames;
   m_dllAvCodec.avcodec_flush_buffers(m_pCodecContext);
+
+  ResetState();
 
   if (m_pHardware)
     m_pHardware->Reset();
@@ -569,6 +958,9 @@ bool CDVDVideoCodecFFmpeg::GetPictureCommon(DVDVideoPicture* pDvdVideoPicture)
     pDvdVideoPicture->pts = pts_itod(m_pFrame->reordered_opaque);
   else
     pDvdVideoPicture->pts = DVD_NOPTS_VALUE;
+
+  // flags supplied by Decode from the hints present at time of input to decoder
+  pDvdVideoPicture->iFlags |= m_iFrameFlags;
 
   if(!m_started)
     pDvdVideoPicture->iFlags |= DVP_FLAG_DROPPED;

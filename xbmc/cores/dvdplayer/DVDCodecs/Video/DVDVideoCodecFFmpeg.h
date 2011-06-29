@@ -27,6 +27,8 @@
 #include "DllAvUtil.h"
 #include "DllSwScale.h"
 
+#define INPUT_HISTBUFNUM 50 //number of input fields/frames to keep track of in order to monitor delaed output of decoder
+
 class CVDPAU;
 class CCriticalSection;
 
@@ -40,6 +42,7 @@ public:
     virtual ~IHardwareDecoder() {};
     virtual bool Open      (AVCodecContext* avctx, const enum PixelFormat) = 0;
     virtual int  Decode    (AVCodecContext* avctx, AVFrame* frame) = 0;
+    virtual int  Decode    (AVCodecContext* avctx, AVFrame* frame, bool bDrain) {return Decode(avctx, frame);};
     virtual bool GetPicture(AVCodecContext* avctx, AVFrame* frame, DVDVideoPicture* picture) = 0;
     virtual int  Check     (AVCodecContext* avctx) = 0;
     virtual void Reset     () {}
@@ -49,7 +52,8 @@ public:
     virtual IHardwareDecoder* Acquire();
     // signal to vdpau (mixer) whether we run normal speed or not
     // so it can switch off deinterlacing
-    virtual bool AllowFrameDropping() {return true;};
+    virtual void NormalSpeed(bool normal) {return;};
+    virtual bool AllowFrameDropping() {return false;};
     virtual void SetDropState(bool bDrop) {return;};
     protected:
     long m_references;
@@ -63,9 +67,24 @@ public:
   virtual void Reset();
   bool GetPictureCommon(DVDVideoPicture* pDvdVideoPicture);
   virtual bool GetPicture(DVDVideoPicture* pDvdVideoPicture);
+  virtual bool AllowDecoderDrop();
+  virtual bool HintDropUrgent();
+  virtual bool HintDropSubtle();
+  virtual bool HintNoPostProc();
+  virtual bool HintNoPresent();
+  virtual bool HintHurryUp();
+  virtual void ResetHintNoPresent();
+  virtual bool SubtleHardwareDropping();
   virtual void SetDropState(bool bDrop);
+  virtual void ResetDropState();
+  virtual void SetNextDropState(bool bDrop);
+  virtual void SetDropMethod(bool bDrop, bool bInputPacket = true);
+  virtual bool SetDecoderHint(int iDropHint);
+
   virtual const char* GetName() { return m_name.c_str(); }; // m_name is never changed after open
   virtual unsigned GetConvergeCount();
+  virtual void NormalSpeed(bool normal) { if (m_pHardware) m_pHardware->NormalSpeed(normal); };
+
 
   bool               IsHardwareAllowed()                     { return !m_bSoftware; }
   IHardwareDecoder * GetHardware()                           { return m_pHardware; };
@@ -80,6 +99,10 @@ protected:
   static enum PixelFormat GetFormat(struct AVCodecContext * avctx, const PixelFormat * fmt);
 
   void GetVideoAspect(AVCodecContext* CodecContext, unsigned int& iWidth, unsigned int& iHeight);
+  void RecordPacketInfoInHist(int iInputPktNum, int64_t pts_opaque, bool bDropRequested, bool bDecoderDropRequested);
+  void SetFrameFlagsFromHist(int iInputPktNum);
+
+  void ResetState();
   AVFrame* m_pFrame;
   AVCodecContext* m_pCodecContext;
 
@@ -98,6 +121,31 @@ protected:
   bool              m_bSoftware;
   IHardwareDecoder *m_pHardware;
   int m_iLastKeyframe;
+  int m_iDecoderInputPktNumber; //current decoder input packet number
+  int m_iDecoderOutputFrameNumber; //current successfully output decoder frame number
+  int m_iDecoderDrop; //number of decoder drops 
+  int m_iDecoderHint; //current decoder hint value
+  int m_iDecoderDropRequest; //decoder drop request count since reset
+  int m_iInterlacedEnabledFrameNumber; //frame number when interlacing mode was enabled
+  int m_iDecoderLastOutputPktNumber; //input packet number when last frame came out of decoder
+  int m_iMaxDecoderIODelay; //current max decoder delay (in inupt pkts) between input packet and its associated output frame
+  bool m_bDropRequested; //current drop request state
+  bool m_bDecoderDropRequested; //current decoder drop request state
+  bool m_bHardwareDropRequested; //current pHardware drop request state
+  bool m_bDropNextRequested; //set drop state next time flag 
+  bool m_bDecodingStable; //decoder flow is now stable flag
+  bool m_bExpectingDecodedFrame; //the decoder is expected to output a frame on next call
+  bool m_bInterlacedMode; //decoder is in interlaced frame mode
+  bool m_bFieldInputMode; //decoder input is field based 
+  int m_iFrameFlags; //flags to be applied to the frame just decoded (from hints at decoder input time)
+  struct input_hist {
+     int64_t pts_opaque; //frame pts opaque form
+     bool drop; //decoder drop request flag
+     int flags; //flags that should be applied to the frame when coming out of the decoder
+     bool field_no_out; //input is thought to be a field that will have no corresponding output frame
+     int input_pos; //absolute input position
+  } m_input_hist[INPUT_HISTBUFNUM]; //buffer history of decoder input frames
+
   double m_dts;
   bool   m_started;
 };
