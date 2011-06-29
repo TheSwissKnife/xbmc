@@ -1097,7 +1097,7 @@ bool CVDPAU::ConfigOutputMethod(AVCodecContext *avctx, AVFrame *pFrame)
 
     int tmpMaxOutputSurfaces = NUM_OUTPUT_SURFACES;
     if (!g_guiSettings.GetBool("videoplayer.usevdpauinteroprgb"))
-      tmpMaxOutputSurfaces = g_advancedSettings.m_videoVDPAUnumOutSurfacesPixmap;
+      tmpMaxOutputSurfaces = std::min(std::max(g_advancedSettings.m_videoVDPAUnumOutSurfacesPixmap, 1), NUM_OUTPUT_SURFACES);
 
     // Creation of outputSurfaces
     for (int i = 0; i < NUM_OUTPUT_SURFACES && i < tmpMaxOutputSurfaces; i++)
@@ -1443,7 +1443,7 @@ void CVDPAU::FFDrawSlice(struct AVCodecContext *s,
   vdp->CheckStatus(vdp_st, __LINE__);
 }
 
-int CVDPAU::Decode(AVCodecContext *avctx, AVFrame *pFrame)
+int CVDPAU::Decode(AVCodecContext *avctx, AVFrame *pFrame, bool bDrain)
 {
   //CLog::Log(LOGNOTICE,"%s",__FUNCTION__);
   VdpStatus vdp_st;
@@ -1471,28 +1471,24 @@ int CVDPAU::Decode(AVCodecContext *avctx, AVFrame *pFrame)
     outRectVid.y1 = OutHeight;
   }
 
-  if (m_presentPicture)
+  if (DiscardPresentPicture())
   {
-    CSingleLock lock(m_outPicSec);
-    if (m_presentPicture->render)
-      m_presentPicture->render->state &= ~FF_VDPAU_STATE_USED_FOR_RENDER;
-    m_presentPicture->render = NULL;
-    m_freeOutPic.push_back(m_presentPicture);
-    m_presentPicture = NULL;
-    int pics = m_usedOutPic.size() + m_freeOutPic.size();
-    if (m_flipBuffer[0])
-      pics++;
-    if (m_flipBuffer[1])
-      pics++;
-    if (m_flipBuffer[2])
-      pics++;
-    CLog::Log(LOGDEBUG, "CVDPAU::Decode: last picture was not presented, noOfPics: %d", pics);
+//    int pics;
+//    { CSingleLock lock(m_outPicSec);
+//      pics = m_usedOutPic.size() + m_freeOutPic.size(); }
+//    if (m_flipBuffer[0])
+//      pics++;
+//    if (m_flipBuffer[1])
+//      pics++;
+//    if (m_flipBuffer[2])
+//      pics++;
+//    CLog::Log(LOGDEBUG, "CVDPAU::Decode: last picture was not presented, noOfPics: %d", pics);
   }
 
   if(pFrame)
   { // we have a new frame from decoder
 
-    vdpau_render_state * render = (vdpau_render_state*)pFrame->data[0];
+    vdpau_render_state * render = (vdpau_render_state*)pFrame->data[2];
     if(!render) // old style ffmpeg gave data on plane 0
       render = (vdpau_render_state*)pFrame->data[0];
     if(!render)
@@ -1526,8 +1522,16 @@ int CVDPAU::Decode(AVCodecContext *avctx, AVFrame *pFrame)
       memset(&outPic->DVDPic, 0, sizeof(DVDVideoPicture));
       ((CDVDVideoCodecFFmpeg*)avctx->opaque)->GetPictureCommon(&outPic->DVDPic);
       outPic->render = render;
-      if (outPic->DVDPic.iFlags & DVP_FLAG_DROPREQUESTED)
-        outPic->DVDPic.iFlags |= DVP_FLAG_DROPPED;
+// no point in dropping drop-requested pics in YUV mode - player can benefit from having choice
+//      if (outPic->DVDPic.iFlags & DVP_FLAG_DROPREQUESTED)
+//      {
+//        //outPic->DVDPic.iFlags |= DVP_FLAG_DROPPED;
+//        m_freeOutPic.push_back(m_usedOutPic.front());
+//        m_usedOutPic.pop_front();
+//        return VC_DROPPED | VC_PRESENTDROP | VC_BUFFER;
+//      }
+//      else
+//        m_usedOutPic.push_back(outPic);
       m_usedOutPic.push_back(outPic);
       lock.Leave();
       return VC_PICTURE | VC_BUFFER;
@@ -1560,8 +1564,8 @@ int CVDPAU::Decode(AVCodecContext *avctx, AVFrame *pFrame)
   {
     CSingleLock lock(m_mixerSec);
     m_mixerCmd |= MIXER_CMD_HURRY;
-    CLog::Log(LOGDEBUG, "CVDPAU::Decode: hurry drop next pic in mixer msg: %d",
-              m_mixerMessages.size());
+//    CLog::Log(LOGDEBUG, "CVDPAU::Decode: hurry drop next pic in mixer msg: %d",
+//              m_mixerMessages.size());
     m_dropCount++;
   }
   else
@@ -1570,15 +1574,17 @@ int CVDPAU::Decode(AVCodecContext *avctx, AVFrame *pFrame)
   // wait for mixer to get pic
   int usedPics, msgs;
   int iter = 0;
+  // hard cap usedPics queue to 1 for interop rgb, 4 for pixmap (evaluated after processing any presentable pic)
   int cappedQueueSize = (m_vdpauOutputMethod == OUTPUT_PIXMAP) ? 4 : 1;
   retval = 0;
   while (1)
   {
-    { CSingleLock lock(m_outPicSec);
-      usedPics = m_usedOutPic.size();
-    }
+    // get msgs count first so that we are more likely to double count rather than undercount
     { CSingleLock lock(m_mixerSec);
       msgs = m_mixerMessages.size();
+    }
+    { CSingleLock lock(m_outPicSec);
+      usedPics = m_usedOutPic.size();
     }
 
     // check if we have a picture to return
@@ -1586,6 +1592,17 @@ int CVDPAU::Decode(AVCodecContext *avctx, AVFrame *pFrame)
     {
       if (usedPics > 0)
       {
+        if (m_usedOutPic.front()->DVDPic.iFlags & DVP_FLAG_DROPPED)
+        {
+          m_freeOutPic.push_back(m_usedOutPic.front());
+          m_usedOutPic.pop_front();
+          return VC_DROPPED | VC_PRESENTDROP | VC_BUFFER;
+        }
+        // if not asked to drain then request more data if we don't have enough in the queue for at least one 
+        // subsequent picture
+        if ((!bDrain) && (usedPics < 2 && msgs < 3))
+           return VC_BUFFER;
+
         retval |= VC_PICTURE;
         break;
       }
@@ -1595,10 +1612,24 @@ int CVDPAU::Decode(AVCodecContext *avctx, AVFrame *pFrame)
       CSingleLock lock(m_outPicSec);
       if (usedPics > 0 && (m_usedOutPic.front()->outputSurface == VDP_INVALID_HANDLE))
       {
-        retval |= VC_PICTURE;
+        m_freeOutPic.push_back(m_usedOutPic.front());
+        m_usedOutPic.pop_front();
+        usedPics = m_usedOutPic.size();
+        retval |= VC_DROPPED | VC_PRESENTDROP;
         break;
       }
-      else if (usedPics > 0)
+      else
+      {
+        // if not asked to drain then request more data if we don't have enough in the queue for at least one 
+        // subsequent picture (constrained by output surfaces)
+        // also do this for pixmaps if it seems our only pic is the frame just passed to us (as this will likely take 
+        // too long to become visible)
+        if (((!bDrain) && (usedPics < 2 && msgs < 3) && (usedPics + msgs < totalAvailableOutputSurfaces)) ||
+            (m_vdpauOutputMethod == OUTPUT_PIXMAP && usedPics + msgs == 1 && pFrame))
+           return VC_BUFFER;
+      }
+      
+      if (usedPics > 0)
       {
         VdpPresentationQueueStatus status;
         VdpTime time;
@@ -1623,29 +1654,30 @@ int CVDPAU::Decode(AVCodecContext *avctx, AVFrame *pFrame)
     {
       continue;
     }
-    // now if we still appear to have no usedPics and a lots msgs we assume mixer thread is having difficulties?
     if (!(usedPics == 0 && msgs > cappedQueueSize))
     {
-      // return in order to fill our buffers - VALUES should reflact number of outputsurfaces?
-      if (usedPics < std::min(std::max(totalAvailableOutputSurfaces - 1, 1), cappedQueueSize) ||
-          usedPics + msgs < std::min(std::max(totalAvailableOutputSurfaces - 1, 1), cappedQueueSize) + 2)
+      // return in order to fill our buffers 
+      if ((!bDrain) && ((usedPics < std::min(std::max(totalAvailableOutputSurfaces - 1, 1), cappedQueueSize) ||
+          usedPics + msgs < std::min(std::max(totalAvailableOutputSurfaces - 1, 1), cappedQueueSize) + 2)))
         break;
 
       // wait to get visible picture
-      if (usedPics > 0)
-      {
+      //if (usedPics > 0)
+      //{
         usleep(50);
-        if (++iter < 5000)
+        if (++iter < 10000)
           continue;
-      }
+      //}
     }
+    // we still appear to have no usedPics and a lots msgs and the picSignal wait timed out 
+    // so we assume mixer thread is having difficulties
 
     // buffers are full and we got no visible picture
-    { CSingleLock lock(m_outPicSec);
-       usedPics = m_usedOutPic.size();
-    }
     { CSingleLock lock(m_mixerSec);
        msgs = m_mixerMessages.size();
+    }
+    { CSingleLock lock(m_outPicSec);
+       usedPics = m_usedOutPic.size();
     }
     CLog::Log(LOGERROR, "CVDPAU::Decode: timed out waiting for picture, messages: %d, pics %d",
                  msgs, usedPics);
@@ -1659,19 +1691,27 @@ int CVDPAU::Decode(AVCodecContext *avctx, AVFrame *pFrame)
   return retval;
 }
 
-bool CVDPAU::GetPicture(AVCodecContext* avctx, AVFrame* frame, DVDVideoPicture* picture)
+bool CVDPAU::DiscardPresentPicture()
 {
-  { CSingleLock lock(m_outPicSec);
-
-    if (m_presentPicture)
-    {
-      CLog::Log(LOGWARNING,"CVDPAU::GetPicture: old presentPicture still valid");
+  CSingleLock lock(m_outPicSec);
+  if (m_presentPicture)
+  {
       if (m_presentPicture->render)
         m_presentPicture->render->state &= ~FF_VDPAU_STATE_USED_FOR_RENDER;
       m_presentPicture->render = NULL;
       m_freeOutPic.push_back(m_presentPicture);
       m_presentPicture = NULL;
-    }
+      return true;
+  }
+  return false;
+}
+
+bool CVDPAU::GetPicture(AVCodecContext* avctx, AVFrame* frame, DVDVideoPicture* picture)
+{
+  { CSingleLock lock(m_outPicSec);
+
+    if (DiscardPresentPicture())
+      CLog::Log(LOGWARNING,"CVDPAU::GetPicture: old presentPicture still valid");
     if (m_usedOutPic.size() > 0)
     {
       m_presentPicture = m_usedOutPic.front();
@@ -1729,14 +1769,7 @@ void CVDPAU::Reset()
   m_mixerCmd |= MIXER_CMD_FLUSH;
 
   CSingleLock lock2(m_outPicSec);
-  if (m_presentPicture)
-  {
-    if (m_presentPicture->render)
-      m_presentPicture->render->state &= ~FF_VDPAU_STATE_USED_FOR_RENDER;
-    m_presentPicture->render = NULL;
-    m_freeOutPic.push_back(m_presentPicture);
-    m_presentPicture = NULL;
-  }
+  DiscardPresentPicture();
   while (!m_usedOutPic.empty())
   {
     OutputPicture *pic = m_usedOutPic.front();
@@ -2069,7 +2102,6 @@ void CVDPAU::Process()
       if (!outPic)
         break;
 
-
       // set pts / dts for interlaced pic
       outPic->DVDPic = m_mixerInput[1].DVDPic;
       if (mixerfield != VDP_VIDEO_MIXER_PICTURE_STRUCTURE_FRAME
@@ -2086,7 +2118,7 @@ void CVDPAU::Process()
 
       // skip mixer step if requested
       if (cmd & MIXER_CMD_HURRY ||
-          (outPic->DVDPic.iFlags & DVP_FLAG_DROPREQUESTED) ||
+//          (outPic->DVDPic.iFlags & DVP_FLAG_DROPREQUESTED) ||
           (outPic->DVDPic.iFlags & DVP_FLAG_DROPPED))
       {
         outPic->DVDPic.iFlags |= DVP_FLAG_DROPPED;
