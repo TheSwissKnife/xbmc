@@ -76,6 +76,7 @@ public:
   virtual void Close();
   virtual bool AllowFrameDropping();
   virtual void SetDropState(bool bDrop);
+  virtual bool DoesOverwrite();
 
   virtual int  Check(AVCodecContext* avctx) 
   { 
@@ -114,7 +115,7 @@ public:
   int SetTexture(int plane, int field, int flipBufferIdx);
   GLuint GetTexture();
   GLuint m_glTexture;
-  virtual long Release();
+//  virtual long Release();
   ThreadIdentifier m_renderThread;
 
   static void             FFReleaseBuffer(AVCodecContext *avctx, AVFrame *pic);
@@ -125,7 +126,7 @@ public:
 
   static void             VDPPreemptionCallbackFunction(VdpDevice device, void* context);
 
-  void Present();
+  void Present(int flipBufferIdx);
   bool ConfigVDPAU(AVCodecContext *avctx, int ref_frames);
   void SpewHardwareAvailable();
   void InitCSCMatrix(int Height);
@@ -142,7 +143,6 @@ public:
   EINTERLACEMETHOD GetDeinterlacingMethod(bool log = false);
   void SetHWUpscaling();
   bool DiscardPresentPicture();
-  bool DiscardOutputPicture();
 
   pictureAge picAge;
   volatile bool  recover;
@@ -303,7 +303,6 @@ protected:
   std::deque<OutputPicture*> m_freeOutPic;
   std::deque<OutputPicture*> m_usedOutPic;
   OutputPicture *m_presentPicture;
-  OutputPicture *m_outputPicture;
   OutputPicture *m_flipBuffer[3];
   unsigned int m_mixerCmd;
   CCriticalSection m_mixerSec, m_outPicSec, m_videoSurfaceSec, m_flipSec;

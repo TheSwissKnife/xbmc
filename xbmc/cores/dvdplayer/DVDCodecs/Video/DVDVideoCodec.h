@@ -244,8 +244,8 @@ public:
     return 0;
   }
 
-  virtual void NormalSpeed(bool normal)
+  virtual bool WaitGetPicture()
   {
-	return;
+    return true;
   }
 };
