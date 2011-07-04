@@ -28,6 +28,7 @@
 #include "DllAvUtil.h"
 #include "DllSwScale.h"
 #include "DllAvFilter.h"
+#include "threads/Thread.h"
 
 class CVDPAU;
 class CCriticalSection;
@@ -66,6 +67,7 @@ public:
   virtual unsigned int SetFilters(unsigned int filters);
   virtual const char* GetName() { return m_name.c_str(); }; // m_name is never changed after open
   virtual unsigned GetConvergeCount();
+  virtual bool WaitGetPicture();
 
   bool               IsHardwareAllowed()                     { return !m_bSoftware; }
   IHardwareDecoder * GetHardware()                           { return m_pHardware; };
@@ -111,4 +113,5 @@ protected:
   int m_iLastKeyframe;
   double m_dts;
   bool   m_started;
+  CEvent m_picSignal;
 };

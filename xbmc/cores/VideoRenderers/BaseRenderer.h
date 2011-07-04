@@ -38,6 +38,8 @@ typedef struct YV12Image
 
   unsigned cshift_x; /* this is the chroma shift used */
   unsigned cshift_y;
+
+  double   presenttime;
 } YV12Image;
 
 enum ERENDERFEATURE

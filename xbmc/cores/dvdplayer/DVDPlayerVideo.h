@@ -35,6 +35,7 @@
 enum CodecID;
 class CDemuxStreamVideo;
 class CDVDOverlayCodecCC;
+class CDVDPlayerVideoOutput;
 
 #define VIDEO_PICTURE_QUEUE_SIZE 1
 
@@ -94,6 +95,7 @@ public:
   int GetVideoBitrate();
 
   void SetSpeed(int iSpeed);
+  int OutputPicture(DVDVideoPicture* pPicture, double pts);
 
   // classes
   CDVDMessageQueue m_messageQueue;
@@ -116,7 +118,6 @@ protected:
   void AutoCrop(DVDVideoPicture *pPicture, RECT &crop);
   CRect m_crop;
 
-  int OutputPicture(DVDVideoPicture* pPicture, double pts);
 #ifdef HAS_VIDEO_PLAYBACK
   void ProcessOverlays(DVDVideoPicture* pSource, double pts);
 #endif
@@ -191,5 +192,8 @@ protected:
   CPullupCorrection m_pullupCorrection;
 
   std::list<DVDMessageListItem> m_packets;
+
+  CDVDPlayerVideoOutput *m_pVideoOutput;
+  CCriticalSection m_criticalSection;
 };
 

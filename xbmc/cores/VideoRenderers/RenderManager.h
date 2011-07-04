@@ -71,7 +71,7 @@ public:
   bool Configure(unsigned int width, unsigned int height, unsigned int d_width, unsigned int d_height, float fps, unsigned flags);
   bool IsConfigured();
 
-  int AddVideoPicture(DVDVideoPicture& picture);
+  int AddVideoPicture(DVDVideoPicture& picture, double presenttime);
 
   void FlipPage(volatile bool& bStop, double timestamp = 0.0, int source = -1, EFIELDSYNC sync = FS_NONE);
   unsigned int PreInit();

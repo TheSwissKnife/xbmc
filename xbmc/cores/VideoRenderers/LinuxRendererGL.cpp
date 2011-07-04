@@ -223,7 +223,7 @@ bool CLinuxRendererGL::ValidateRenderer()
 
 void CLinuxRendererGL::ManageTextures()
 {
-  m_NumYV12Buffers = 2;
+  m_NumYV12Buffers = 3;
   //m_iYV12RenderBuffer = 0;
   return;
 }
@@ -244,7 +244,10 @@ bool CLinuxRendererGL::ValidateRenderTarget()
     LoadShaders();
 
     for (int i = 0 ; i < m_NumYV12Buffers ; i++)
+    {
       (this->*m_textureCreate)(i);
+      m_buffers[i].loaded = false;
+    }
 
     m_bValidated = true;
     return true;
@@ -354,6 +357,17 @@ void CLinuxRendererGL::ReleaseImage(int source, bool preserve)
 
   m_bImageReady = true;
 }
+
+void CLinuxRendererGL::Upload(int source)
+{
+  if (!m_bValidated) return;
+
+  // call texture load function
+  (this->*m_textureUpload)(source);
+
+  m_buffers[source].loaded = true;
+}
+
 
 void CLinuxRendererGL::CalculateTextureSourceRects(int source, int num_planes)
 {
@@ -727,7 +741,7 @@ unsigned int CLinuxRendererGL::PreInit()
   m_resolution = RES_PAL_4x3;
 
   m_iYV12RenderBuffer = 0;
-  m_NumYV12Buffers = 2;
+  m_NumYV12Buffers = 3;
 
   // setup the background colour
   m_clearColour = (float)(g_advancedSettings.m_videoBlackBarColour & 0xff) / 0xff;
@@ -1081,7 +1095,7 @@ void CLinuxRendererGL::Render(DWORD flags, int renderBuffer)
   if (vdpau)
     if (!vdpau->IsBufferValid(renderBuffer))
     {
-      SetEvent(m_eventTexturesDone[renderBuffer]);
+      m_eventTexturesDone[renderBuffer]->Set();
       return;
     }
 #endif
@@ -1110,7 +1124,10 @@ void CLinuxRendererGL::Render(DWORD flags, int renderBuffer)
     m_currentField = FIELD_FULL;
 
   // call texture load function
-  (this->*m_textureUpload)(renderBuffer);
+  if (!m_buffers[renderBuffer].loaded)
+    (this->*m_textureUpload)(renderBuffer);
+  else
+    m_eventTexturesDone[renderBuffer]->Set();
 
   if (m_renderMethod & RENDER_GLSL)
   {
@@ -1152,6 +1169,7 @@ void CLinuxRendererGL::Render(DWORD flags, int renderBuffer)
     RenderSoftware(renderBuffer, m_currentField);
     VerifyGLState();
   }
+  m_buffers[renderBuffer].loaded = false;
 }
 
 void CLinuxRendererGL::RenderSinglePass(int index, int field)

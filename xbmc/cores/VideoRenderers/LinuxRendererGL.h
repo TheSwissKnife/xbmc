@@ -140,6 +140,7 @@ public:
   virtual unsigned int PreInit();
   virtual void         UnInit();
   virtual void         Reset(); /* resets renderer after seek for example */
+  virtual void         Upload(int source);
 
 #ifdef HAVE_LIBVDPAU
   virtual void         AddProcessor(CVDPAU* vdpau);
@@ -264,6 +265,7 @@ protected:
     YV12Image image;
     unsigned  flipindex; /* used to decide if this has been uploaded */
     GLuint    pbo[MAX_PLANES];
+    bool      loaded;
 
 #ifdef HAVE_LIBVDPAU
     CVDPAU*   vdpau;
