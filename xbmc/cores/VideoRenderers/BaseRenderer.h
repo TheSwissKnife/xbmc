@@ -59,7 +59,7 @@ public:
   virtual ~CBaseRenderer();
 
   void SetViewMode(int viewMode);
-  RESOLUTION GetResolution() const;
+  RESOLUTION GetResolution(bool next = false) const;
   void GetVideoRect(CRect &source, CRect &dest);
   float GetAspectRatio() const;
 

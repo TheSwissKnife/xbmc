@@ -66,8 +66,6 @@ void CDVDPlayerVideoOutput::Reset()
 
   if (m_recover)
     Start();
-
-  m_recover = false;
 }
 
 void CDVDPlayerVideoOutput::Dispose()
@@ -153,13 +151,17 @@ void CDVDPlayerVideoOutput::Process()
   CSingleLock lock(m_criticalSection);
   lock.Leave();
 
-  RefreshGlxContext();
-
   while (!m_bStop)
   {
     lock.Enter();
     if (!m_toOutputMessage.empty())
     {
+      if (m_recover)
+      {
+        if (RefreshGlxContext())
+          m_recover = false;
+      }
+
       FromOutputMessage fromMsg;
       ToOutputMessage toMsg = m_toOutputMessage.front();
       m_toOutputMessage.pop();
@@ -299,7 +301,6 @@ bool CDVDPlayerVideoOutput::GetPicture(ToOutputMessage toMsg, FromOutputMessage 
 
 bool CDVDPlayerVideoOutput::RefreshGlxContext()
 {
-  bool retVal = false;
   Display*     dpy;
   GLXContext   glContext;
 
@@ -383,7 +384,8 @@ bool CDVDPlayerVideoOutput::RefreshGlxContext()
     return false;
   }
 
-  return retVal;
+  CLog::Log(LOGNOTICE, "CDVDPlayerVideoOutput::RefreshGlxContext - refreshed context");
+  return true;
 }
 
 bool CDVDPlayerVideoOutput::DestroyGlxContext()

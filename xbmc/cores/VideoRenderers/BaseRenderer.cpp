@@ -212,9 +212,9 @@ float CBaseRenderer::RefreshWeight(float refresh, float fps)
     return (float)fabs(div / round - 1.0);
 }
 
-RESOLUTION CBaseRenderer::GetResolution() const
+RESOLUTION CBaseRenderer::GetResolution(bool next /*= false*/) const
 {
-  if (g_graphicsContext.IsFullScreenRoot() && (g_graphicsContext.IsFullScreenVideo() || g_graphicsContext.IsCalibrating()))
+  if (next || (g_graphicsContext.IsFullScreenRoot() && (g_graphicsContext.IsFullScreenVideo() || g_graphicsContext.IsCalibrating())))
     return m_resolution;
 
   return g_graphicsContext.GetVideoResolution();

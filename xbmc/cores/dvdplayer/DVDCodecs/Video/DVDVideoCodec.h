@@ -248,4 +248,9 @@ public:
   {
     return true;
   }
+
+  virtual bool HwFreeResources()
+  {
+    return false;
+  }
 };

@@ -76,7 +76,7 @@ public:
   virtual void Close();
   virtual bool AllowFrameDropping();
   virtual void SetDropState(bool bDrop);
-  virtual bool DoesOverwrite();
+  virtual bool FreeResources();
 
   virtual int  Check(AVCodecContext* avctx) 
   { 

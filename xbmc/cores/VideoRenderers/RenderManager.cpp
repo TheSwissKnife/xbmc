@@ -211,7 +211,7 @@ CStdString CXBMCRenderManager::GetVSyncState()
   return state;
 }
 
-bool CXBMCRenderManager::Configure(unsigned int width, unsigned int height, unsigned int d_width, unsigned int d_height, float fps, unsigned flags)
+bool CXBMCRenderManager::Configure(unsigned int width, unsigned int height, unsigned int d_width, unsigned int d_height, float fps, unsigned flags, bool &bResChange)
 {
   /* make sure any queued frame was fully presented */
   double timeout = m_presenttime + 0.1;
@@ -231,6 +231,8 @@ bool CXBMCRenderManager::Configure(unsigned int width, unsigned int height, unsi
     return false;
   }
 
+  RESOLUTION res = GetResolution();
+
   bool result = m_pRenderer->Configure(width, height, d_width, d_height, fps, flags);
   if(result)
   {
@@ -246,6 +248,8 @@ bool CXBMCRenderManager::Configure(unsigned int width, unsigned int height, unsi
     m_presentstep = PRESENT_IDLE;
     m_presentevent.Set();
   }
+
+  bResChange = (res != m_pRenderer->GetResolution(true)) ? true : false;
 
   return result;
 }
