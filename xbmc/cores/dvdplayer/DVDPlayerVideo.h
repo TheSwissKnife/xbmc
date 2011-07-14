@@ -113,6 +113,7 @@ protected:
 #define EOS_ABORT 1
 #define EOS_DROPPED 2
 #define EOS_VERYLATE 4
+#define EOS_FLUSH 8
 
   void AutoCrop(DVDVideoPicture* pPicture);
   void AutoCrop(DVDVideoPicture *pPicture, RECT &crop);

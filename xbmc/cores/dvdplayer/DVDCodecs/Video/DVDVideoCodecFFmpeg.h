@@ -53,6 +53,7 @@ public:
     // so it can switch off deinterlacing
     virtual bool AllowFrameDropping() {return true;};
     virtual void SetDropState(bool bDrop) {return;};
+    virtual bool FreeResources() {return false;};
   };
 
   CDVDVideoCodecFFmpeg();
@@ -68,6 +69,7 @@ public:
   virtual const char* GetName() { return m_name.c_str(); }; // m_name is never changed after open
   virtual unsigned GetConvergeCount();
   virtual bool WaitGetPicture();
+  virtual bool HwFreeResources();
 
   bool               IsHardwareAllowed()                     { return !m_bSoftware; }
   IHardwareDecoder * GetHardware()                           { return m_pHardware; };

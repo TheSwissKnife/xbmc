@@ -1810,9 +1810,17 @@ void CVDPAU::SetDropState(bool bDrop)
   m_dropState = bDrop;
 }
 
-bool CVDPAU::DoesOverwrite()
+bool CVDPAU::FreeResources()
 {
-  return false;
+  recover = true;
+  glInteropFinish = true;
+
+  CLog::Log(LOGNOTICE,"CVDPAU::FreeResources");
+
+  FiniVDPAUOutput();
+  FiniVDPAUProcs();
+
+  return true;
 }
 
 void CVDPAU::Present(int flipBufferIdx)
