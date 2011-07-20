@@ -82,6 +82,7 @@ class CVideoReferenceClock : public CThread
     void    UpdateClock(int NrVBlanks, bool CheckMissed);
     double  UpdateInterval();
     int64_t TimeOfNextVblank();
+    void    NotifyRefreshChanged();
 
     int64_t m_CurrTime;          //the current time of the clock when using vblank as clock source
     int64_t m_LastIntTime;       //last interpolated clock value, to make sure the clock doesn't go backwards

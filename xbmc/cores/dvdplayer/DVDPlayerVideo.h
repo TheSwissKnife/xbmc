@@ -174,6 +174,7 @@ protected:
 
   bool m_stalled;
   bool m_started;
+  bool m_refreshChanging;
   std::string m_codecname;
 
   /* autosync decides on how much of clock we should use when deciding sleep time */

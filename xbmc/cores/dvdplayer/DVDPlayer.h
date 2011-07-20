@@ -244,6 +244,9 @@ public:
   virtual int GetCacheLevel() const ;
 
   virtual int OnDVDNavResult(void* pData, int iMessage);
+
+  virtual void PauseRefreshChanging();
+  virtual void NotifyRefreshChanged();
 protected:
   friend class CSelectionStreams;
 
@@ -470,4 +473,5 @@ protected:
   } m_EdlAutoSkipMarkers;
 
   CPlayerOptions m_PlayerOptions;
+  bool m_refreshChanging;
 };

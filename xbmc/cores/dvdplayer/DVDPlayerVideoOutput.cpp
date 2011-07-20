@@ -31,7 +31,7 @@
 #include "windowing/WindowingFactory.h"
 
 CDVDPlayerVideoOutput::CDVDPlayerVideoOutput(CDVDPlayerVideo *videoplayer)
-: CThread()
+: CThread("Video Output Thread")
 {
   m_pVideoPlayer = videoplayer;
   m_pts = 0;
@@ -50,7 +50,6 @@ CDVDPlayerVideoOutput::~CDVDPlayerVideoOutput()
 void CDVDPlayerVideoOutput::Start()
 {
   Create();
-  SetName("Video Output Thread");
 }
 
 void CDVDPlayerVideoOutput::Reset()
@@ -70,6 +69,8 @@ void CDVDPlayerVideoOutput::Reset()
 
 void CDVDPlayerVideoOutput::Dispose()
 {
+  m_bStop = true;
+  m_toMsgSignal.Set();
   StopThread();
   m_recover = true;
 }
@@ -103,7 +104,7 @@ bool CDVDPlayerVideoOutput::GetMessage(FromOutputMessage &msg, bool bWait)
 {
   bool bReturn = false;
 
-  while (1)
+  while (!m_bStop)
   {
     if (bWait && !m_fromMsgSignal.WaitMSec(300))
     {
@@ -165,12 +166,13 @@ void CDVDPlayerVideoOutput::Process()
       FromOutputMessage fromMsg;
       ToOutputMessage toMsg = m_toOutputMessage.front();
       m_toOutputMessage.pop();
+
       bool gotPic;
-      if (toMsg.bLastPic && !flushed)
+      if (toMsg.bLastPic)
       {
         m_picture.iFlags &= ~DVP_FLAG_INTERLACED;
         m_picture.iFlags |= DVP_FLAG_NOSKIP;
-        gotPic = true;
+        gotPic = false;
       }
       else
         gotPic = GetPicture(toMsg, fromMsg);
@@ -183,7 +185,9 @@ void CDVDPlayerVideoOutput::Process()
           fromMsg.iResult = m_pVideoPlayer->OutputPicture(&m_picture,m_pts);
 
           if (fromMsg.iResult & EOS_FLUSH)
+          {
             flushed = true;
+          }
         }
         else
           fromMsg.iResult = EOS_FLUSH;
@@ -390,6 +394,8 @@ bool CDVDPlayerVideoOutput::RefreshGlxContext()
 
 bool CDVDPlayerVideoOutput::DestroyGlxContext()
 {
+  g_renderManager.ReleaseProcessor();
+
   Display *dpy = g_Windowing.GetDisplay();
   if (m_glContext)
   {

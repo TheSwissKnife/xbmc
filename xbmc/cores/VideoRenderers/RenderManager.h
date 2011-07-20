@@ -37,6 +37,7 @@
 #include "threads/Thread.h"
 #include "settings/VideoSettings.h"
 #include "OverlayRenderer.h"
+#include "../dvdplayer/DVDClock.h"
 
 class CRenderCapture;
 
@@ -71,11 +72,15 @@ public:
   bool Configure(unsigned int width, unsigned int height, unsigned int d_width, unsigned int d_height, float fps, unsigned flags, bool &bResChange);
   bool IsConfigured();
 
-  int AddVideoPicture(DVDVideoPicture& picture, double presenttime);
+  int AddVideoPicture(DVDVideoPicture& picture, int source, double presenttime, EFIELDSYNC sync, CDVDClock *clock, bool &late);
 
   void FlipPage(volatile bool& bStop, double timestamp = 0.0, int source = -1, EFIELDSYNC sync = FS_NONE);
+  int WaitForBuffer(volatile bool& bStop);
+  void ReleaseProcessor();
+  void NotifyFlip();
   unsigned int PreInit();
   void UnInit();
+  void SetReconfigured();
 
   void AddOverlay(CDVDOverlay* o, double pts)
   {
@@ -163,6 +168,7 @@ protected:
   void PresentWeave();
   void PresentBob();
   void PresentBlend();
+  void CheckNextBuffer();
 
   bool m_bPauseDrawing;   // true if we should pause rendering
 
@@ -191,7 +197,9 @@ protected:
   EPRESENTSTEP     m_presentstep;
   int        m_presentsource;
   CEvent     m_presentevent;
-
+  CEvent     m_flipEvent;
+  CDVDClock  *m_pClock;
+  bool       m_late;
 
   OVERLAY::CRenderer m_overlays;
 

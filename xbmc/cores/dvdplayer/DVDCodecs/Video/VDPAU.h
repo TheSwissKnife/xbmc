@@ -76,7 +76,7 @@ public:
   virtual void Close();
   virtual bool AllowFrameDropping();
   virtual void SetDropState(bool bDrop);
-  virtual bool FreeResources();
+  virtual bool FreeResources(bool test = false);
 
   virtual int  Check(AVCodecContext* avctx) 
   { 
@@ -263,6 +263,7 @@ protected:
   virtual void OnExit();
   virtual void Process();
   void FlushMixer();
+  void GLFinish();
 //  int NextBuffer();
 
   struct MixerMessage
@@ -280,6 +281,7 @@ protected:
     GLuint texture[4];
     GLXPixmap  glPixmap;
     Pixmap  pixmap;
+    bool bound;
     VdpPresentationQueueTarget vdp_flip_target;
     VdpPresentationQueue vdp_flip_queue;
 #ifdef GL_NV_vdpau_interop

@@ -53,7 +53,8 @@ CGraphicContext::CGraphicContext(void) :
   m_Resolution(RES_INVALID), 
   /*m_windowResolution,*/
   m_guiScaleX(1.0f), 
-  m_guiScaleY(1.0f) 
+  m_guiScaleY(1.0f),
+  m_bAllowSetResolution(true)
   /*,m_cameras, */ 
   /*m_origins, */
   /*m_clipRegions,*/
@@ -320,6 +321,9 @@ bool CGraphicContext::IsValidResolution(RESOLUTION res)
 
 void CGraphicContext::SetVideoResolution(RESOLUTION res, bool forceUpdate)
 {
+  if (!m_bAllowSetResolution)
+    return;
+
   RESOLUTION lastRes = m_Resolution;
 
   // If the user asked us to guess, go with desktop
@@ -334,20 +338,21 @@ void CGraphicContext::SetVideoResolution(RESOLUTION res, bool forceUpdate)
     return;
   }
 
-  //only pause when switching monitor resolution/refreshrate,
-  //not when switching between fullscreen and windowed or when resizing the window
-  if ((res != RES_DESKTOP && res != RES_WINDOW) || (lastRes != RES_DESKTOP && lastRes != RES_WINDOW))
-  {
-    //pause the player during the refreshrate change
-    int delay = g_guiSettings.GetInt("videoplayer.pauseafterrefreshchange");
-    if (delay > 0 && g_guiSettings.GetBool("videoplayer.adjustrefreshrate") && g_application.IsPlayingVideo() && !g_application.IsPaused())
-    {
-      g_application.m_pPlayer->Pause();
-      ThreadMessage msg = {TMSG_MEDIA_UNPAUSE};
-      CDelayedMessage* pauseMessage = new CDelayedMessage(msg, delay * 100);
-      pauseMessage->Create(true);
-    }
-  }
+//  //only pause when switching monitor resolution/refreshrate,
+//  //not when switching between fullscreen and windowed or when resizing the window
+//  if ((res != RES_DESKTOP && res != RES_WINDOW) || (lastRes != RES_DESKTOP && lastRes != RES_WINDOW))
+//  {
+//    //pause the player during the refreshrate change
+//    int delay = g_guiSettings.GetInt("videoplayer.pauseafterrefreshchange");
+//    if (delay > 0 && g_guiSettings.GetBool("videoplayer.adjustrefreshrate") && g_application.IsPlayingVideo())
+//    {
+//      // player has already paused itself if this is going to happen
+////      g_application.m_pPlayer->Pause();
+//      ThreadMessage msg = {TMSG_MEDIA_UNPAUSE};
+//      CDelayedMessage* pauseMessage = new CDelayedMessage(msg, delay * 100);
+//      pauseMessage->Create(true);
+//    }
+//  }
 
   if (res >= RES_DESKTOP)
   {
