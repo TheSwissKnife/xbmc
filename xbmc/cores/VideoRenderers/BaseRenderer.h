@@ -27,6 +27,13 @@
 #define MAX_PLANES 3
 #define MAX_FIELDS 3
 
+enum EFIELDSYNC
+{
+  FS_NONE,
+  FS_TOP,
+  FS_BOT
+};
+
 typedef struct YV12Image
 {
   BYTE *   plane[MAX_PLANES];
@@ -40,6 +47,10 @@ typedef struct YV12Image
   unsigned cshift_y;
 
   double   presenttime;
+  EFIELDSYNC sync;
+
+  double  *pPresenttime;
+  EFIELDSYNC *pSync;
 } YV12Image;
 
 enum ERENDERFEATURE

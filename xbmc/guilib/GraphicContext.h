@@ -207,6 +207,8 @@ public:
 
   CRect generateAABB(const CRect &rect) const;
 
+  void AllowSetResolution(bool allow) {m_bAllowSetResolution = allow;};
+
 protected:
   std::stack<CRect> m_viewStack;
 
@@ -219,6 +221,7 @@ protected:
   bool m_bFullScreenVideo;
   bool m_bCalibrating;
   RESOLUTION m_Resolution;
+  bool m_bAllowSetResolution;
 
 private:
   void UpdateCameraPosition(const CPoint &camera);

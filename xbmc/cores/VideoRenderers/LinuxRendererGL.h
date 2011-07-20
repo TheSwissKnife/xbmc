@@ -65,13 +65,6 @@ struct DRAWRECT
   float bottom;
 };
 
-enum EFIELDSYNC
-{
-  FS_NONE,
-  FS_TOP,
-  FS_BOT
-};
-
 struct YUVRANGE
 {
   int y_min, y_max;
@@ -141,6 +134,12 @@ public:
   virtual void         UnInit();
   virtual void         Reset(); /* resets renderer after seek for example */
   virtual void         Upload(int source);
+  virtual void         NotifyFlip();
+  virtual bool         HasFreeBuffer();
+  virtual int          GetNextBufferIndex();
+  virtual int          GetCurrentBufferIndex();
+  virtual void         ReleaseProcessor();
+  virtual void         LogBuffers();
 
 #ifdef HAVE_LIBVDPAU
   virtual void         AddProcessor(CVDPAU* vdpau);
@@ -219,6 +218,8 @@ protected:
   int m_iYV12RenderBuffer;
   int m_NumYV12Buffers;
   int m_iLastRenderBuffer;
+  int m_iNextRenderBuffer;
+  int m_iDisplayedRenderBuffer;
 
   bool m_bConfigured;
   bool m_bValidated;

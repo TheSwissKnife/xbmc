@@ -380,11 +380,11 @@ bool CDVDVideoCodecFFmpeg::WaitGetPicture()
   return false;
 }
 
-bool CDVDVideoCodecFFmpeg::HwFreeResources()
+bool CDVDVideoCodecFFmpeg::HwFreeResources(bool test /* = false */)
 {
   bool bReturn = false;
   if (m_pHardware)
-    bReturn = m_pHardware->FreeResources();
+    bReturn = m_pHardware->FreeResources(test);
 
   return bReturn;
 }

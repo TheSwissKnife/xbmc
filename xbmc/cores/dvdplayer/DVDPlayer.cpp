@@ -361,6 +361,7 @@ bool CDVDPlayer::OpenFile(const CFileItem& file, const CPlayerOptions &options)
     m_mimetype  = file.GetMimeType();
     m_filename = file.m_strPath;
     m_scanStart = 0;
+    m_refreshChanging = false;
 
     m_ready.Reset();
     Create();
@@ -4033,6 +4034,19 @@ bool CDVDPlayer::SwitchChannel(const CPVRChannel &channel)
   m_messenger.Put(new CDVDMsgType<CPVRChannel>(CDVDMsg::PLAYER_CHANNEL_SELECT, channel));
 
   return true;
+}
+
+void CDVDPlayer::PauseRefreshChanging()
+{
+  SetPlaySpeed(DVD_PLAYSPEED_PAUSE);
+  m_refreshChanging = true;
+}
+
+void CDVDPlayer::NotifyRefreshChanged()
+{
+  if (m_refreshChanging)
+    SetPlaySpeed(DVD_PLAYSPEED_NORMAL);
+  m_refreshChanging = false;
 }
 
 bool CDVDPlayer::CachePVRStream(void) const

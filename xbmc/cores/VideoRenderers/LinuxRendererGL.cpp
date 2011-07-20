@@ -140,6 +140,8 @@ CLinuxRendererGL::CLinuxRendererGL()
   m_iFlags = 0;
 
   m_iYV12RenderBuffer = 0;
+  m_iNextRenderBuffer = 0;
+  m_iDisplayedRenderBuffer = 2;
   m_flipindex = 0;
   m_currentField = FIELD_FULL;
   m_reloadShaders = 0;
@@ -249,6 +251,11 @@ bool CLinuxRendererGL::ValidateRenderTarget()
       m_buffers[i].loaded = false;
     }
 
+    m_iLastRenderBuffer = -1;
+    m_iYV12RenderBuffer = 0;
+    m_iNextRenderBuffer = 0;
+    m_iDisplayedRenderBuffer = 2;
+
     m_bValidated = true;
     return true;
   }
@@ -282,6 +289,9 @@ bool CLinuxRendererGL::Configure(unsigned int width, unsigned int height, unsign
     m_buffers[i].image.flags = 0;
 
   m_iLastRenderBuffer = -1;
+  m_iYV12RenderBuffer = 0;
+  m_iNextRenderBuffer = 0;
+  m_iDisplayedRenderBuffer = 2;
 
   m_nonLinStretch    = false;
   m_nonLinStretchGui = false;
@@ -335,6 +345,8 @@ int CLinuxRendererGL::GetImage(YV12Image *image, int source, bool readonly)
   image->flags    = im.flags;
   image->cshift_x = im.cshift_x;
   image->cshift_y = im.cshift_y;
+  image->pPresenttime = &im.presenttime;
+  image->pSync    = &im.sync;
 
   return source;
 
@@ -732,6 +744,67 @@ void CLinuxRendererGL::FlipPage(int source)
   return;
 }
 
+void CLinuxRendererGL::NotifyFlip()
+{
+  if (!m_bValidated)
+    return;
+
+  m_iDisplayedRenderBuffer = (m_iYV12RenderBuffer+m_NumYV12Buffers-1)
+                             % m_NumYV12Buffers;
+}
+
+bool CLinuxRendererGL::HasFreeBuffer()
+{
+  if (!m_bValidated)
+    return false;
+
+  if (m_iNextRenderBuffer == m_iDisplayedRenderBuffer)
+    return false;
+  else
+    return true;
+}
+
+void CLinuxRendererGL::LogBuffers()
+{
+  CLog::Log(LOGNOTICE, "-------------- render: %d", m_iYV12RenderBuffer);
+  CLog::Log(LOGNOTICE, "-------------- next: %d", m_iNextRenderBuffer);
+  CLog::Log(LOGNOTICE, "-------------- display: %d", m_iDisplayedRenderBuffer);
+}
+
+int CLinuxRendererGL::GetNextBufferIndex()
+{
+  if (!m_bValidated)
+    return -1;
+
+  if (m_iNextRenderBuffer == m_iDisplayedRenderBuffer)
+    return -1;
+  m_iNextRenderBuffer = (m_iNextRenderBuffer+1) % m_NumYV12Buffers;
+  return m_iNextRenderBuffer;
+}
+
+int CLinuxRendererGL::GetCurrentBufferIndex()
+{
+  if (!m_bValidated)
+    return -1;
+
+  if (m_iNextRenderBuffer == m_iYV12RenderBuffer)
+    return -1;
+  return (m_iYV12RenderBuffer+1) % m_NumYV12Buffers;
+}
+
+void CLinuxRendererGL::ReleaseProcessor()
+{
+  m_bValidated = false;
+  // YV12 textures
+  for (int i = 0; i < NUM_BUFFERS; ++i)
+  {
+#ifdef HAVE_LIBVDPAU
+    YUVBUFFER &buf = m_buffers[i];
+    SAFE_RELEASE(buf.vdpau);
+#endif
+  }
+}
+
 unsigned int CLinuxRendererGL::PreInit()
 {
   CSingleLock lock(g_graphicsContext);
@@ -741,6 +814,8 @@ unsigned int CLinuxRendererGL::PreInit()
   m_resolution = RES_PAL_4x3;
 
   m_iYV12RenderBuffer = 0;
+  m_iNextRenderBuffer = 0;
+  m_iDisplayedRenderBuffer = 2;
   m_NumYV12Buffers = 3;
 
   // setup the background colour
@@ -1124,9 +1199,9 @@ void CLinuxRendererGL::Render(DWORD flags, int renderBuffer)
     m_currentField = FIELD_FULL;
 
   // call texture load function
-  if (!m_buffers[renderBuffer].loaded)
-    (this->*m_textureUpload)(renderBuffer);
-  else
+//  if (!m_buffers[renderBuffer].loaded)
+//    (this->*m_textureUpload)(renderBuffer);
+//  else
     m_eventTexturesDone[renderBuffer]->Set();
 
   if (m_renderMethod & RENDER_GLSL)
@@ -1169,7 +1244,7 @@ void CLinuxRendererGL::Render(DWORD flags, int renderBuffer)
     RenderSoftware(renderBuffer, m_currentField);
     VerifyGLState();
   }
-  m_buffers[renderBuffer].loaded = false;
+//  m_buffers[renderBuffer].loaded = false;
 }
 
 void CLinuxRendererGL::RenderSinglePass(int index, int field)
@@ -1479,6 +1554,7 @@ void CLinuxRendererGL::RenderVDPAU(int index, int field)
   glBindTexture(m_textureTarget, plane.id);
 
 //  vdpau->BindPixmap();
+//  CLog::Log(LOGNOTICE, "---------------- mark1");
 
   // Try some clamping or wrapping
   glTexParameteri(m_textureTarget, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -1536,7 +1612,8 @@ void CLinuxRendererGL::RenderVDPAU(int index, int field)
   if (m_pVideoFilterShader)
     m_pVideoFilterShader->Disable();
 
-  vdpau->ReleasePixmap(index);
+//  vdpau->ReleasePixmap(index);
+//  CLog::Log(LOGNOTICE, "---------------- mark2");
 
   glBindTexture (m_textureTarget, 0);
   glDisable(m_textureTarget);
@@ -2262,10 +2339,11 @@ void CLinuxRendererGL::UploadVDPAUTexture(int index)
   // pixmap
   else if (ret == 0)
   {
-    fields[0][1].id = plane.id;
+    fields[0][1].id = vdpau->GetTexture();
     fields[0][1].flipindex = flipindex;
-    glBindTexture(m_textureTarget, plane.id);
+    glBindTexture(m_textureTarget, fields[0][1].id);
     vdpau->BindPixmap(index);
+    glBindTexture(m_textureTarget, 0);
   }
   else
   {

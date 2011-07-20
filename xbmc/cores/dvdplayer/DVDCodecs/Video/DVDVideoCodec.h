@@ -249,7 +249,7 @@ public:
     return true;
   }
 
-  virtual bool HwFreeResources()
+  virtual bool HwFreeResources(bool test = false)
   {
     return false;
   }

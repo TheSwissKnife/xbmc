@@ -471,6 +471,10 @@ case TMSG_POWERDOWN:
       g_application.Minimize();
       break;
 
+    case TMSG_REFRESHCHANGED:
+      g_application.m_pPlayer->NotifyRefreshChanged();
+      break;
+
     case TMSG_EXECUTE_OS:
 #if defined( _LINUX) && !defined(__APPLE__)
       CUtil::RunCommandLine(pMsg->strParam.c_str(), (pMsg->dwParam1 == 1));

@@ -83,7 +83,7 @@ bool CBaseRenderer::FindResolutionFromOverride(float fps, float& weight, bool fa
     if (!fallback && (fps < override.fpsmin || fps > override.fpsmax))
       continue;
 
-    for (size_t j = (int)RES_CUSTOM; j < g_settings.m_ResInfo.size(); j++)
+    for (size_t j = (int)RES_DESKTOP; j < g_settings.m_ResInfo.size(); j++)
     {
       if (g_settings.m_ResInfo[j].iWidth  == g_settings.m_ResInfo[m_resolution].iWidth
        && g_settings.m_ResInfo[j].iHeight == g_settings.m_ResInfo[m_resolution].iHeight

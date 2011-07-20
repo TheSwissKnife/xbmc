@@ -26,6 +26,7 @@
 #include "utils/log.h"
 #include "utils/TimeUtils.h"
 #include "threads/SingleLock.h"
+#include "Application.h"
 
 #if defined(HAS_GLX) && defined(HAS_XRANDR)
   #include <sstream>
@@ -1049,6 +1050,8 @@ bool CVideoReferenceClock::UpdateRefreshrate(bool Forced /*= false*/)
     if (m_UseNvSettings)
     {
       CSingleLock SingleLock(m_CritSection);
+      if (m_RefreshRate != NvRefreshRate)
+        NotifyRefreshChanged();
       m_RefreshRate = NvRefreshRate;
       return true;
     }
@@ -1209,6 +1212,12 @@ void CVideoReferenceClock::SetFineAdjust(double fineadjust)
 {
   CSingleLock SingleLock(m_CritSection);
   m_fineadjust = fineadjust;
+}
+
+void CVideoReferenceClock::NotifyRefreshChanged()
+{
+  ThreadMessage msg = {TMSG_REFRESHCHANGED};
+  g_application.getApplicationMessenger().SendMessage(msg, false);
 }
 
 CVideoReferenceClock g_VideoReferenceClock;
