@@ -597,12 +597,12 @@ int CDVDVideoCodecFFmpeg::Decode(BYTE* pData, int iSize, double dts, double pts)
   if (bInputData && len == 0 && m_bExpectingDecodedFrame)
   {
      // instant input drop
-     iDecodeResState = VC_DROPPED;
+     iDecodeResState |= VC_DROPPED;
   }
   else if (m_bExpectingDecodedFrame && (!iGotPicture))
   {
      // drop related to a request in the past
-     iDecodeResState = VC_DROPPED;
+     iDecodeResState |= VC_DROPPED;
   }
   // count and categorise the decoder drops
   if (iDecodeResState & VC_DROPPED)
@@ -636,7 +636,7 @@ int CDVDVideoCodecFFmpeg::Decode(BYTE* pData, int iSize, double dts, double pts)
 
   if (iGotPicture)
   {
-     iDecodeResState = VC_DECODED;
+     iDecodeResState |= VC_DECODED;
      //count the output frames
      m_iDecoderOutputFrameNumber++;
 

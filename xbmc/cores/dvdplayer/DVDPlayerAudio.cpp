@@ -687,6 +687,7 @@ void CDVDPlayerAudio::HandleSyncError(double duration)
 
   if( fabs(error) > DVD_MSEC_TO_TIME(100) || m_syncclock )
   {
+CLog::Log(LOGDEBUG, "ASB: CDVDPlayerAudio:: CDVDPlayerAudio::HandleSyncError CLOCK SET m_syncclock: %i m_speed: %i clock paused: %i error: %f clock: %f newclock: %f", (int)m_syncclock, m_speed, (int)m_pClock->IsPaused(), error, clock, clock+error);
     m_pClock->Discontinuity(clock+error);
     if(m_speed == DVD_PLAYSPEED_NORMAL)
       CLog::Log(LOGDEBUG, "CDVDPlayerAudio:: Discontinuity - was:%f, should be:%f, error:%f", clock, clock+error, error);

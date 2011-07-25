@@ -116,6 +116,8 @@ protected:
   void AutoCrop(DVDVideoPicture *pPicture, RECT &crop);
   CRect m_crop;
 
+  int CalcDropRequirement();
+  void ResetDropInfo();
   int OutputPicture(DVDVideoPicture* pPicture, double pts);
 #ifdef HAS_VIDEO_PLAYBACK
   void ProcessOverlays(DVDVideoPicture* pSource, YV12Image* pDest, double pts);
@@ -128,7 +130,9 @@ protected:
   double m_FlipTimeStamp; // time stamp of last flippage. used to play at a forced framerate
 
   int m_iLateFrames;
+  bool m_bDoubleDrop;
   int m_iDroppedFrames;
+  int m_iDecoderDroppedFrames;
   int m_iDroppedRequest;
 
   void   ResetFrameRateCalc();
@@ -155,6 +159,45 @@ protected:
     double       framerate;
     bool         inited;
   } m_output; //holds currently configured output
+
+#define DROPINFO_SAMPBUFSIZE 300
+
+#define DC_DECODER  0x1
+#define DC_OUTPUT   0x2
+#define DC_SUBTLE   0x4
+#define DC_URGENT   0x8
+
+  struct DropInfo
+  {
+    double fDropRatio;
+    double fDropRatioLastNormal;
+    double fDropRatioLast2X;
+    double fDropRatioLast4X;
+    int iCurSampIdx;
+    double fLatenessSamp[DROPINFO_SAMPBUFSIZE];
+    double fClockSamp[DROPINFO_SAMPBUFSIZE];
+    int iDecoderDropSamp[DROPINFO_SAMPBUFSIZE];
+    int iCalcIdSamp[DROPINFO_SAMPBUFSIZE];
+    double iPlaySpeed;
+    double fDInterval;
+    double fFrameRate;
+    int iLastDecoderDropRequestDecoderDrops;
+    int iLastDecoderDropRequestCalcId;
+    int iLastOutputDropRequestCalcId;
+    int iVeryLateCount;
+    int iCalcId;
+    int iOscillator;
+    int64_t iLastOutputPictureTime;
+    int iDropNextFrame; // bit mask DC_DECODER, DC_SUBTLE, DC_URGENT, DC_OUTPUT
+    int iSuccessiveDecoderDropRequests;
+    int iSuccessiveOutputDropRequests;
+  } m_dropinfo;
+  bool m_bJustDropped;
+  int m_iDecoderPresentDroppedFrames;
+  int m_iOutputDroppedFrames;
+  int m_iPlayerDropRequests;
+
+  double m_iCurrentPtsClock;
 
   bool m_bAllowFullscreen;
   bool m_bRenderSubs;

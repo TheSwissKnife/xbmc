@@ -1623,7 +1623,9 @@ bool CDVDPlayer::CheckPlayerInit(CCurrentStream& current, unsigned int source)
         SendPlayerMessage(new CDVDMsgDouble(CDVDMsg::GENERAL_DELAY, starttime), source);
     }
 
-    SendPlayerMessage(new CDVDMsgGeneralResync(current.dts, setclock), source);
+CLog::Log(LOGDEBUG, "ASB: CDVDPlayer::CheckPlayerInit(%d) current.dts: %f setclock: %i -DVD_MSEC_TO_TIME(500)", source, current.dts, (int)setclock);
+    //SendPlayerMessage(new CDVDMsgGeneralResync(current.dts, setclock), source);
+    SendPlayerMessage(new CDVDMsgGeneralResync(current.dts - DVD_MSEC_TO_TIME(500), setclock), source);
   }
   return false;
 }
@@ -3108,7 +3110,10 @@ void CDVDPlayer::FlushBuffers(bool queued, double pts, bool accurate)
     }
 
     if(pts != DVD_NOPTS_VALUE)
+{
       m_clock.Discontinuity(pts);
+CLog::Log(LOGDEBUG, "ASB: CDVDPlayer::FlushBuffers m_clock.Discontinuity pts: %f", pts);
+}
     UpdatePlayState(0);
   }
 }

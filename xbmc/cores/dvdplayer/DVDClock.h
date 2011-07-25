@@ -43,6 +43,7 @@ public:
   ~CDVDClock();
 
   double GetClock(double* AbsoluteClock = NULL);
+  double GetClockTick(double* AbsoluteClock = NULL);
 
   void Discontinuity(double currentPts = 0LL);
 
@@ -50,6 +51,7 @@ public:
   void Pause();
   void Resume();
   void SetSpeed(int iSpeed);
+  int GetSpeed();
   bool IsPaused();
 
   /* tells clock at what framerate video is, to  *
@@ -75,6 +77,7 @@ protected:
   int64_t m_startClock;
   int64_t m_pauseClock;
   double m_iDisc;
+  int m_speed;
   bool m_bReset;
 
   static int64_t m_systemFrequency;

@@ -162,6 +162,7 @@ void CVideoReferenceClock::Process()
     m_CurrTimeFract = 0.0;
     m_ClockSpeed = 1.0;
     m_TotalMissedVblanks = 0;
+    m_fineadjust = 1.0;
     m_RefreshChanged = 0;
     m_Started.Set();
 
@@ -724,7 +725,7 @@ bool CVideoReferenceClock::SetupD3D()
   }
 
 
-  if (m_UseVblank) m_ClockTickInterval = m_ClockSpeed / m_RefreshRate * m_SystemFrequency;  
+  if (m_UseVblank) m_ClockTickInterval = m_ClockSpeed * m_fineadjust / m_RefreshRate * m_SystemFrequency;  
   m_MissedVblanks = 0;
 
   return true;
@@ -876,7 +877,7 @@ void CVideoReferenceClock::VblankHandler(int64_t nowtime, double fps)
   {
     CLog::Log(LOGDEBUG, "CVideoReferenceClock: Detected refreshrate: %f hertz, rounding to %i hertz", fps, RefreshRate);
     m_RefreshRate = RefreshRate;
-    if (m_UseVblank) m_ClockTickInterval = m_ClockSpeed / m_RefreshRate * m_SystemFrequency; 
+    if (m_UseVblank) m_ClockTickInterval = m_ClockSpeed * m_fineadjust / m_RefreshRate * m_SystemFrequency; 
   }
   //m_LastRefreshTime = m_CurrTime;
   m_LastRefreshTime = CurrentHostCounter();
@@ -1513,7 +1514,7 @@ bool CVideoReferenceClock::UpdateRefreshrate(bool Forced /*= false*/)
     {
       CSingleLock SingleLock(m_CritSection);
       m_RefreshRate = NvRefreshRate;
-      if (m_UseVblank) m_ClockTickInterval = m_ClockSpeed / m_RefreshRate * m_SystemFrequency; 
+      if (m_UseVblank) m_ClockTickInterval = m_ClockSpeed * m_fineadjust / m_RefreshRate * m_SystemFrequency; 
       return true;
     }
 
@@ -1522,7 +1523,7 @@ bool CVideoReferenceClock::UpdateRefreshrate(bool Forced /*= false*/)
 
   CSingleLock SingleLock(m_CritSection);
   m_RefreshRate = GetRandRRate();
-  if (m_UseVblank) m_ClockTickInterval = m_ClockSpeed / m_RefreshRate * m_SystemFrequency; 
+  if (m_UseVblank) m_ClockTickInterval = m_ClockSpeed * m_fineadjust / m_RefreshRate * m_SystemFrequency; 
 
   CLog::Log(LOGDEBUG, "CVideoReferenceClock: Detected refreshrate: %i hertz", (int)m_RefreshRate);
 
@@ -1557,7 +1558,7 @@ bool CVideoReferenceClock::UpdateRefreshrate(bool Forced /*= false*/)
   #endif
 
   if (RefreshRate != m_RefreshRate || Forced)
-    if (m_UseVblank) m_ClockTickInterval = m_ClockSpeed / m_RefreshRate * m_SystemFrequency; 
+    if (m_UseVblank) m_ClockTickInterval = m_ClockSpeed * m_fineadjust / m_RefreshRate * m_SystemFrequency; 
   {
     CSingleLock SingleLock(m_CritSection);
     CLog::Log(LOGDEBUG, "CVideoReferenceClock: Detected refreshrate: %i hertz", RefreshRate);

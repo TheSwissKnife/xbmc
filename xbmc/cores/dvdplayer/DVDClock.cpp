@@ -154,7 +154,37 @@ bool CDVDClock::IsPaused()
   return (m_pauseClock != 0); 
 }
 
-// return interpolated time for tickng clocks
+// return tick time for vsync ticking clocks
+double CDVDClock::GetClockTick(double* AbsoluteClock /*= NULL */)
+{
+  CSharedLock lock(m_critSection);
+  int64_t current;
+
+  if (m_bReset)
+  {
+    //m_startClock = g_VideoReferenceClock.GetTime();
+    g_VideoReferenceClock.GetTime(&m_startClock);
+    m_systemUsed = m_systemFrequency;
+    m_pauseClock = 0;
+    m_iDisc = 0;
+    m_bReset = false;
+  }
+
+  if (AbsoluteClock || !m_pauseClock)
+    current = g_VideoReferenceClock.GetTime();
+
+  if (AbsoluteClock)
+    *AbsoluteClock = DVD_TIME_BASE * (double)(current - m_systemOffset) / m_systemUsed;
+
+  if (m_pauseClock)
+    current = m_pauseClock;
+
+  current -= m_startClock;
+  return DVD_TIME_BASE * (double)current / m_systemUsed + m_iDisc;
+
+}
+
+// return interpolated time for vsync ticking clocks
 double CDVDClock::GetClock(double* AbsoluteClock /*= NULL */)
 {
   CSharedLock lock(m_critSection);
@@ -184,10 +214,17 @@ double CDVDClock::GetClock(double* AbsoluteClock /*= NULL */)
 
 }
 
+int CDVDClock::GetSpeed()
+{
+  CSharedLock lock(m_critSection);
+  return m_speed;
+}
+
 void CDVDClock::SetSpeed(int iSpeed)
 {
   // this will sometimes be a little bit of due to rounding errors, ie clock might jump abit when changing speed
   CExclusiveLock lock(m_critSection);
+  m_speed = iSpeed;
 
   if(iSpeed == DVD_PLAYSPEED_PAUSE)
   {
