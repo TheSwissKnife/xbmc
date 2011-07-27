@@ -51,6 +51,8 @@ public:
   void Pause();
   void Resume();
   void SetSpeed(int iSpeed);
+  int GetSpeed();
+  bool IsPaused();
 
   /* tells clock at what framerate video is, to  *
    * allow it to adjust speed for a better match */
@@ -59,8 +61,9 @@ public:
   bool   SetMaxSpeedAdjust(double speed);
 
   static double GetAbsoluteClock(bool interpolated = true);
+  static double GetNextAbsoluteClockTick(double target);
   static double GetFrequency() { return (double)m_systemFrequency ; }
-  static double WaitAbsoluteClock(double target);
+  static double WaitAbsoluteClock(double target, double* WaitClockDur = 0);
 
   //when m_ismasterclock is true, CDVDPlayerAudio synchronizes the clock to the audio stream
   //when it's false, CDVDPlayerAudio synchronizes the audio stream to the clock
@@ -78,6 +81,7 @@ protected:
   int64_t m_startClock;
   int64_t m_pauseClock;
   double m_iDisc;
+  int m_speed;
   bool m_bReset;
 
   static int64_t m_systemFrequency;

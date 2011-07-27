@@ -366,6 +366,10 @@ void CGraphicContext::SetVideoResolution(RESOLUTION res, bool forceUpdate)
   }
 
   Lock();
+ 
+  //tell render manager to do what it needs to prepare for a resolution change
+  if (m_Resolution != res)
+     g_renderManager.Recover();
 
   m_iScreenWidth  = g_settings.m_ResInfo[res].iWidth;
   m_iScreenHeight = g_settings.m_ResInfo[res].iHeight;
@@ -391,7 +395,7 @@ void CGraphicContext::SetVideoResolution(RESOLUTION res, bool forceUpdate)
     g_Windowing.ResizeWindow(m_iScreenWidth, m_iScreenHeight, -1, -1);
 
   // update anyone that relies on sizing information
-  g_renderManager.Recover();
+  //g_renderManager.Recover();
   g_Mouse.SetResolution(m_iScreenWidth, m_iScreenHeight, 1, 1);
   g_windowManager.SendMessage(GUI_MSG_NOTIFY_ALL, 0, 0, GUI_MSG_WINDOW_RESIZE);
 

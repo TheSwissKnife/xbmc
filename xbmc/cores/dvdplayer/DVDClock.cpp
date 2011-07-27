@@ -72,7 +72,7 @@ double CDVDClock::GetAbsoluteClock(bool interpolated /*= true*/)
   return SystemToAbsolute(current);
 }
 
-double CDVDClock::WaitAbsoluteClock(double target)
+double CDVDClock::GetNextAbsoluteClockTick(double target)
 {
   CSingleLock lock(m_systemsection);
   CheckSystemClock();
@@ -85,8 +85,33 @@ double CDVDClock::WaitAbsoluteClock(double target)
 
   systemtarget = (int64_t)(target / DVD_TIME_BASE * (double)freq);
   systemtarget += offset;
-  systemtarget = g_VideoReferenceClock.Wait(systemtarget);
+  systemtarget = g_VideoReferenceClock.GetNextTickTime(systemtarget);
   systemtarget -= offset;
+  return (double)systemtarget / freq * DVD_TIME_BASE;
+}
+
+double CDVDClock::WaitAbsoluteClock(double target, double* WaitClockDur /*= 0 */)
+{
+  CSingleLock lock(m_systemsection);
+  CheckSystemClock();
+
+  int64_t systemtarget, freq, offset;
+  freq   = m_systemFrequency;
+  offset = m_systemOffset;
+
+  lock.Leave();
+
+  int64_t* WaitedTime;
+  if (!WaitClockDur)
+     WaitedTime = 0;
+     
+  systemtarget = (int64_t)(target / DVD_TIME_BASE * (double)freq);
+  systemtarget += offset;
+  systemtarget = g_VideoReferenceClock.Wait(systemtarget, WaitedTime);
+  systemtarget -= offset;
+  if (WaitedTime)
+     *WaitClockDur = *WaitedTime / freq * DVD_TIME_BASE;
+
   return (double)systemtarget / freq * DVD_TIME_BASE;
 }
 
@@ -163,6 +188,18 @@ void CDVDClock::Resume()
     m_startClock += current - m_pauseClock;
     m_pauseClock = 0;
   }
+}
+
+bool CDVDClock::IsPaused()
+{
+  CSharedLock lock(m_critSection);
+  return (m_pauseClock != 0);
+}
+
+int CDVDClock::GetSpeed()
+{
+  CSharedLock lock(m_critSection);
+  return m_speed;
 }
 
 bool CDVDClock::SetMaxSpeedAdjust(double speed)
