@@ -25,6 +25,7 @@
 #include "threads/SingleLock.h"
 #include "DVDClock.h"
 #include "utils/MathUtils.h"
+#include "utils/TimeUtils.h"
 
 using namespace std;
 
@@ -167,6 +168,7 @@ MsgQueueReturnCode CDVDMessageQueue::Get(CDVDMsg** pMsg, unsigned int iTimeoutIn
     m_bEmptied = true;
   }
 
+  int64_t start = CurrentHostCounter();
   while (!m_bAbortRequest)
   {
     if(!m_list.empty() && m_list.back().priority >= priority && !m_bCaching)
@@ -196,7 +198,8 @@ MsgQueueReturnCode CDVDMessageQueue::Get(CDVDMsg** pMsg, unsigned int iTimeoutIn
       ret = MSGQ_OK;
       break;
     }
-    else if (!iTimeoutInMilliSeconds)
+    //if we keep getting events for lower priority we may never timeout
+    else if (!iTimeoutInMilliSeconds || CurrentHostCounter() - start > CurrentHostFrequency() / 1000 * iTimeoutInMilliSeconds)
     {
       ret = MSGQ_TIMEOUT;
       break;

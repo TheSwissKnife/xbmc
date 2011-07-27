@@ -55,19 +55,33 @@ class CD3DCallback : public ID3DResource
 
 #endif
 
+// size of vblank times array
+#define VBLANKTIMESSIZE 201
+// confidence levels for the recorded vblank times
+#define VBLANKTIMESQUITECONFIDENT 30
+#define VBLANKTIMESVERYCONFIDENT 70
+
 class CVideoReferenceClock : public CThread
 {
   public:
     CVideoReferenceClock();
 
     int64_t GetTime(bool interpolated = true);
+    int64_t GetTime(int64_t* InterpolatedTime);
+    int64_t GetNextTickTime(int64_t Target = 0);
     int64_t GetFrequency();
-    void    SetSpeed(double Speed);
+    bool    SetSpeed(double Speed);
     double  GetSpeed();
     int     GetRefreshRate(double* interval = NULL);
-    int64_t Wait(int64_t Target);
+    int64_t  ConvertSystemDurToClockDur(int64_t duration);
+
+    int64_t DurUntilNextVBlank(int64_t ClockInterval = 0);
+    int64_t TimeOfNextVBlank(int64_t wait = 0, int safetyTolerance = 0);
+    int64_t Wait(int64_t Target = 0, int64_t* WaitedTime = 0);
+
     bool    WaitStarted(int MSecs);
-    bool    GetClockInfo(int& MissedVblanks, double& ClockSpeed, int& RefreshRate);
+    bool    WaitStable(int MSecs);
+    bool    GetClockInfo(int& MissedVblanks, double& ClockSpeed, int& RefreshRate, double& MeasuredRefreshRate);
     void    SetFineAdjust(double fineadjust);
     void    RefreshChanged() { m_RefreshChanged = 1; }
 
@@ -79,10 +93,10 @@ class CVideoReferenceClock : public CThread
     void    Process();
     bool    UpdateRefreshrate(bool Forced = false);
     void    SendVblankSignal();
-    void    UpdateClock(int NrVBlanks, bool CheckMissed);
+    void    UpdateClock(int NrVBlanks, int64_t measuredVblankTime);
     double  UpdateInterval();
-    int64_t TimeOfNextVblank();
     void    NotifyRefreshChanged();
+    int     CorrectVBlankTracking(int64_t* measuredTime);
 
     int64_t m_CurrTime;          //the current time of the clock when using vblank as clock source
     int64_t m_LastIntTime;       //last interpolated clock value, to make sure the clock doesn't go backwards
@@ -90,6 +104,7 @@ class CVideoReferenceClock : public CThread
     double  m_ClockSpeed;        //the frequency of the clock set by dvdplayer
     int64_t m_ClockOffset;       //the difference between the vblank clock and systemclock, set when vblank clock is stopped
     int64_t m_LastRefreshTime;   //last time we updated the refreshrate
+    int64_t m_RefreshRateChangeStartTime;   //last time we were asked to look for a refreshrate change
     int64_t m_SystemFrequency;   //frequency of the systemclock
     double  m_fineadjust;
 
@@ -100,7 +115,16 @@ class CVideoReferenceClock : public CThread
     int     m_RefreshChanged;    //1 = we changed the refreshrate, 2 = we should check the refreshrate forced
     int     m_TotalMissedVblanks;//total number of clock updates missed, used by codec information screen
     int64_t m_VblankTime;        //last time the clock was updated when using vblank as clock
+    int     m_SafeSample;//the safe sample number
+    int64_t m_SafeSampleTime; //the vblanktime (system time) of the safe sample
+    int     m_SampledVblankCount; //the count of vblanks sampled from querying driver since stream start 
+    int64_t m_SampledVblankTimes[VBLANKTIMESSIZE]; //array of last VBLANKTIMESSIZE system times of sampled vblanks
+    int     m_VblankSampleConfidence; //counter to keep track of our confidence in sample accuracy
+    int     m_PreviousRefreshRate; //previous refresh rate 
+    int64_t m_PVblankInterval; //estimated actual system clock interval between vblanks
+    double  m_ClockTickInterval;	//clock tick size (ie m_CurrTime increments)
 
+    CEvent  m_Stable;             //set when the vblank clock is stable
     CEvent  m_Started;            //set when the vblank clock is started
     CEvent  m_VblankEvent;        //set when a vblank happens
 
