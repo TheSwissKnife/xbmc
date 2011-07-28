@@ -89,6 +89,7 @@ void CAdvancedSettings::Initialize()
   m_videoAllowLanczos3 = false;
   m_videoAutoScaleMaxFps = 30.0f;
   m_videoAllowMpeg4VDPAU = false;
+  m_videoFFmpegInterlacedFlagLingerFrames = 750; //typically around 30 secs
   m_videoVDPAUdeintHD = -1;
   m_videoVDPAUdeintSD = -1;
   m_videoVDPAUmaxHeight = -1;
@@ -452,6 +453,7 @@ void CAdvancedSettings::ParseSettingsFile(const CStdString &file)
 
     XMLUtils::GetString(pElement,"cleandatetime", m_videoCleanDateTimeRegExp);
     XMLUtils::GetString(pElement,"ppffmpegdeinterlacing",m_videoPPFFmpegDeint);
+    XMLUtils::GetInt(pElement,"ffmpeginterlacedflaglingerframes",m_videoFFmpegInterlacedFlagLingerFrames);
     XMLUtils::GetString(pElement,"ppffmpegpostprocessing",m_videoPPFFmpegPostProc);
     XMLUtils::GetBoolean(pElement,"vdpauscaling",m_videoVDPAUScaling);
     XMLUtils::GetFloat(pElement, "nonlinearstretchratio", m_videoNonLinStretchRatio, 0.01f, 1.0f);

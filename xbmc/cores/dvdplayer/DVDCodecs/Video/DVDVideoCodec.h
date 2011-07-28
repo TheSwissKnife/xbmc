@@ -125,11 +125,18 @@ struct DVDVideoUserData
 #define DVP_FLAG_INTERLACED         0x00000008 //Set to indicate that this frame is interlaced
 
 #define DVP_FLAG_NOSKIP             0x00000010 // indicate this picture should never be dropped
-#define DVP_FLAG_DROPPED            0x00000020 // indicate that this picture has been dropped in decoder stage, will have no data
+#define DVP_FLAG_DROPPED            0x00000020 // indicate that this picture was requested to be dropped in decoder stage and specifically should not be presented, or has bad data from decoder - either way should not be presented
 #define DVP_FLAG_DROPREQUESTED      0x00000040 // indicate that this picture was requested to have been dropped in decoder stage
 #define DVP_FLAG_NOPOSTPROC         0x00000080 // indicate that this picture was requested not to have any non-essential post processing performed on it
 
 // DVP_FLAG 0x00000100 - 0x00000f00 is in use by libmpeg2!
+
+//decoder hints
+#define VC_HINT_DROPURGENT 0x00000001 // try to drop with some urgency
+#define VC_HINT_DROPSUBTLE 0x00000002 // try to drop as subtly as possible
+#define VC_HINT_NOPRESENT  0x00000004 // regardless of any success in dropping in decoder do not present (ie set DVP_FLAG_DROPPED in picture)
+#define VC_HINT_NOPOSTPROC 0x00000008 // indicate that pictures should not have any non-essential post processing performed on them
+#define VC_HINT_HURRYUP    0x00000010 // indicate that decoder should hurry up (though does not imply drop)
 
 #define DVP_QSCALE_UNKNOWN          0
 #define DVP_QSCALE_MPEG1            1
@@ -146,8 +153,12 @@ typedef std::vector<CDVDCodecOption> CDVDCodecOptions;
 #define VC_PICTURE  0x00000004  // the decoder got a picture, call Decode(NULL, 0) again to parse the rest of the data
 #define VC_USERDATA 0x00000008  // the decoder found some userdata,  call Decode(NULL, 0) again to parse the rest of the data
 #define VC_FLUSHED  0x00000010  // the decoder lost it's state, we need to restart decoding again
-#define VC_DROPPED  0x00000020  // needed to identify if a picture was dropped
+#define VC_DROPPED  0x00000020  // identify if a picture was dropped (in some way)
+#define VC_NOTDECODERDROPPED  0x00000040  // identify if a picture was not dropped in decoder (for decoder methods that support exposing dropping)
+#define VC_DECODERBIFIELDDROP 0x00000080  // identify if a drop was of two fields in decoder
+#define VC_DECODERFRAMEDROP   0x00000100  // identify if a drop was of a frame in decoder
 #define VC_PRESENTDROP   0x00000200  // identify if a drop was after decode (before presentation)
+#define VC_DECODED  0x00000400  // identify if a picture decoded (not necessarily giving the picture yet)
 
 class CDVDVideoCodec
 {
@@ -228,6 +239,12 @@ public:
   virtual unsigned int SetFilters(unsigned int filters) { return 0u; }
 
   /*
+   * will be called by video player indicating the importance of a frame drop request 
+   * urgent or not, and must not be presented or not, return true only if implemented
+   */
+  virtual bool SetDropHint(int iDropHint) { return false; }
+
+  /*
    *
    * should return codecs name
    */
@@ -253,4 +270,5 @@ public:
   {
     return false;
   }
+
 };
