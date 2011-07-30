@@ -653,7 +653,7 @@ void CDVDPlayerVideo::Process()
           lock.Leave();
           bool bWait = m_pVideoCodec->WaitGetPicture();
           lock.Enter();
-          CLog::Log(LOGDEBUG,"CDVDPlayerVideo::Process WaitGetPicture() DUR: %"PRId64"", CurrentHostCounter() - wgt);
+//          CLog::Log(LOGDEBUG,"CDVDPlayerVideo::Process WaitGetPicture() DUR: %"PRId64"", CurrentHostCounter() - wgt);
 
           // wait for message from output
           // block it decoder has no buffer

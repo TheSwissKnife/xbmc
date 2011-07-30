@@ -344,6 +344,8 @@ void CXBMCRenderManager::UnInit()
 
   m_overlays.Flush();
 
+  CLog::Log(LOGNOTICE, "------------------------- uninit");
+
   // free renderer resources.
   // TODO: we may also want to release the renderer here.
   if (m_pRenderer)
@@ -691,11 +693,12 @@ void CXBMCRenderManager::PresentWeave()
 
 void CXBMCRenderManager::Recover()
 {
-#if defined(HAS_GL) && !defined(TARGET_DARWIN)
-  CLog::Log(LOGERROR, "CXBMCRenderManager::Recover");
-  //glFlush(); // attempt to have gpu done with pixmap and vdpau
-  glFinish();
-#endif
+//#if defined(HAS_GL) && !defined(TARGET_DARWIN)
+//  CLog::Log(LOGERROR, "CXBMCRenderManager::Recover");
+//  //glFlush(); // attempt to have gpu done with pixmap and vdpau
+//  glFinish();
+//#endif
+//  UnInit();
 }
 
 void CXBMCRenderManager::UpdateResolution()

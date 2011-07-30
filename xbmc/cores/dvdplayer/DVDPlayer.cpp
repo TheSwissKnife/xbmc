@@ -4038,12 +4038,18 @@ bool CDVDPlayer::SwitchChannel(const CPVRChannel &channel)
 
 void CDVDPlayer::PauseRefreshChanging()
 {
+  if (!IsPlaying())
+    return;
+
   SetPlaySpeed(DVD_PLAYSPEED_PAUSE);
   m_refreshChanging = true;
 }
 
 void CDVDPlayer::NotifyRefreshChanged()
 {
+  if (!IsPlaying())
+    return;
+
   if (m_refreshChanging)
     SetPlaySpeed(DVD_PLAYSPEED_NORMAL);
   m_refreshChanging = false;
