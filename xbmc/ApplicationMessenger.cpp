@@ -472,7 +472,8 @@ case TMSG_POWERDOWN:
       break;
 
     case TMSG_REFRESHCHANGED:
-      g_application.m_pPlayer->NotifyRefreshChanged();
+      if (g_application.m_pPlayer)
+        g_application.m_pPlayer->NotifyRefreshChanged();
       break;
 
     case TMSG_EXECUTE_OS:
