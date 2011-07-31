@@ -22,6 +22,7 @@
 #include "emu_kernel32.h"
 #include "emu_dummy.h"
 #include "utils/log.h"
+#include "threads/Thread.h"
 
 #include "storage/IoSupport.h"
 
@@ -243,10 +244,11 @@ extern "C" DWORD WINAPI dllGetCurrentProcessId(void)
 extern "C" BOOL WINAPI dllGetProcessTimes(HANDLE hProcess, LPFILETIME lpCreationTime, LPFILETIME lpExitTime, LPFILETIME lpKernelTime, LPFILETIME lpUserTime)
 {
   // since the xbox has only one process, we just take the current thread
-  HANDLE h = GetCurrentThread();
-  BOOL res = GetThreadTimes(h, lpCreationTime, lpExitTime, lpKernelTime, lpUserTime);
+  int64_t iUsage = CThread::GetCurrentThreadUsage();
+  lpUserTime->dwLowDateTime  = (DWORD) (iUsage & 0xFFFFFFFF );
+  lpUserTime->dwHighDateTime = (DWORD) (iUsage >> 32 );
 
-  return res;
+  return true;
 }
 
 extern "C" int WINAPI dllDuplicateHandle(HANDLE hSourceProcessHandle,   // handle to source process

@@ -21,25 +21,19 @@
 
 #pragma once
 
-#include <windows.h>
+#include <pthread.h>
+
+struct threadOpaque
+{
+  pid_t LwpId;
+};
+
+typedef pthread_t ThreadIdentifier;
+typedef threadOpaque ThreadOpaque;
+typedef int THREADFUNC;
 
 namespace XbmcThreads
 {
-  /**
-   * A thin wrapper around windows thread specific storage
-   * functionality.
-   */
-  template <typename T> class ThreadLocal
-  {
-    DWORD key;
-  public:
-    inline ThreadLocal() { key = TlsAlloc(); set(0); }
-
-    inline ~ThreadLocal() { TlsFree(key);  }
-
-    inline void set(T* val) {  TlsSetValue(key,(LPVOID)val);  }
-
-    inline T* get() { return (T*)TlsGetValue(key); }
-  };
+  inline static void ThreadSleep(unsigned int millis) { usleep(millis); }
 }
 

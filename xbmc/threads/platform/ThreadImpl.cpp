@@ -1,8 +1,5 @@
-#ifndef __PLATFORM_INCLUDE__H__
-#define __PLATFORM_INCLUDE__H__
-
 /*
- *      Copyright (C) 2005-2008 Team XBMC
+ *      Copyright (C) 2005-2011 Team XBMC
  *      http://www.xbmc.org
  *
  *  This Program is free software; you can redistribute it and/or modify
@@ -22,13 +19,18 @@
  *
  */
 
-#include "PlatformDefs.h"
-#include "XHandlePublic.h"
-#include "XFileUtils.h"
-#include "XSyncUtils.h"
-#include "XTimeUtils.h"
-#include "XMemUtils.h"
-#include "ConvUtils.h"
+#pragma once
 
+#include "threads/platform/platform.select.h"
+
+#if (defined USE_PTHREADS_THREADING)
+#include "threads/platform/pthreads/ThreadImpl.cpp"
+#if defined(TARGET_DARWIN_IOS)
+#include "threads/platform/darwin/ThreadSchedImpl.cpp"
+#else
+#include "threads/platform/linux/ThreadSchedImpl.cpp"
+#endif
+#elif (defined USE_WIN_THREADING)
+#include "threads/platform/win/ThreadImpl.cpp"
 #endif
 

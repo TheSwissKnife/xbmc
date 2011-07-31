@@ -156,6 +156,30 @@ static void ff_flush_avutil_log_buffers(void)
 #ifdef _MSC_VER
 static __declspec(thread) CDVDDemuxFFmpeg* g_demuxer = 0;
 #else
+// helper class for TLS handling
+class TLS
+{
+public:
+  TLS()
+  {
+    pthread_key_create(&m_key, free);
+  }
+
+  ~TLS()
+  {
+    pthread_key_delete(m_key);
+  }
+
+  void *Get()
+  {
+    if (pthread_getspecific(m_key) == NULL)
+      pthread_setspecific(m_key, malloc(8));
+
+    return pthread_getspecific(m_key);
+  }
+
+  pthread_key_t m_key;
+};
 static TLS g_tls;
 #define g_demuxer (*((CDVDDemuxFFmpeg**)g_tls.Get()))
 #endif
