@@ -85,7 +85,7 @@ static struct SInterlaceMapping
 //so we just keep a static handle to libvdpau around
 void* CVDPAU::dl_handle;
 
-CVDPAU::CVDPAU()
+CVDPAU::CVDPAU() : CThread("CVDPAU")
 {
   glXBindTexImageEXT = NULL;
   glXReleaseTexImageEXT = NULL;
