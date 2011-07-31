@@ -35,7 +35,6 @@
 #include "XTimeUtils.h"
 #include "PlatformDefs.h"
 #include "XHandle.h"
-#include "XEventUtils.h"
 
 using namespace std;
 using namespace XbmcThreads;

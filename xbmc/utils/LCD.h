@@ -67,7 +67,8 @@ public:
   void Reset();
   void Render(LCD_MODE mode);
   ILCD() : m_disableOnPlay(DISABLE_ON_PLAY_NONE), 
-           m_eCurrentCharset(CUSTOM_CHARSET_DEFAULT) {}
+           m_eCurrentCharset(CUSTOM_CHARSET_DEFAULT),
+           CThread("ILCD"){}
 protected:
   virtual void Process() = 0;
   void StringToLCDCharSet(CStdString& strText);

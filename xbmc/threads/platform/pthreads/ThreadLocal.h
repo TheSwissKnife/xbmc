@@ -33,7 +33,7 @@ namespace XbmcThreads
   {
     pthread_key_t key;
   public:
-    inline ThreadLocal() { pthread_key_create(&key,NULL); }
+    inline ThreadLocal() { pthread_key_create(&key,NULL); set(0); }
 
     inline ~ThreadLocal() { pthread_key_delete(key); }
 

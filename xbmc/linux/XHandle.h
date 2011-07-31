@@ -47,7 +47,6 @@ public:
   inline HandleType GetType() { return m_type; }
   void ChangeType(HandleType newType);
 
-  ThreadIdentifier      m_hThread;
   bool                  m_threadValid;
   XbmcThreads::ConditionVariable     *m_hCond;
   std::list<CXHandle*>  m_hParents;

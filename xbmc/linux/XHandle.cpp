@@ -20,11 +20,18 @@
  */
 
 #include "XHandle.h"
-#include "XThreadUtils.h"
 #include "utils/log.h"
 #include "threads/SingleLock.h"
 
 int CXHandle::m_objectTracker[10] = {0};
+
+HANDLE WINAPI GetCurrentThread(void) {
+  return (HANDLE)-1; // -1 a special value - pseudo handle
+}
+
+HANDLE WINAPI GetCurrentProcess(void) {
+  return (HANDLE)-1; // -1 a special value - pseudo handle
+}
 
 CXHandle::CXHandle()
 {
@@ -80,7 +87,7 @@ CXHandle::~CXHandle()
     CLog::Log(LOGERROR,"%s, destroying handle with ref count %d", __FUNCTION__, m_nRefCount);
     assert(false);
   }
-  
+
   if (m_hMutex) {
     delete m_hMutex;
   }
@@ -93,9 +100,9 @@ CXHandle::~CXHandle()
     delete m_hCond;
   }
 
-  if (m_threadValid) {
-    pthread_join(m_hThread, NULL);
-  }
+//  if (m_threadValid) {
+//    pthread_join(m_hThread, NULL);
+//  }
 
   if ( fd != 0 ) {
     close(fd);
