@@ -205,7 +205,7 @@ void CDVDPlayerVideoOutput::Process()
     else
     {
       lock.Leave();
-      if (!m_toMsgSignal.WaitMSec(500))
+      if (!m_toMsgSignal.WaitMSec(100))
         CLog::Log(LOGNOTICE,"CDVDPlayerVideoOutput::Process - timeout waiting for message");
     }
   }
