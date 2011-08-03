@@ -36,25 +36,17 @@ struct ToOutputMessage
 {
   ToOutputMessage()
   {
-    iGroupId = 0;
     fFrameTime = 0;
     bPacketDrop = false;
     bNotToSkip = false;
     bLastPic = false;
-    fForcedAspectRatio = 0;
     iSpeed = 0;
-    iFilters = 0;
-    mInt = VS_INTERLACEMETHOD_NONE;
   };
-  int iGroupId;
   double fFrameTime;
   bool bPacketDrop;
   bool bNotToSkip;
   bool bLastPic;
-  float fForcedAspectRatio;
   int iSpeed;
-  unsigned int iFilters;
-  EINTERLACEMETHOD mInt;
 };
 
 struct FromOutputMessage
@@ -73,7 +65,7 @@ public:
   virtual ~CDVDPlayerVideoOutput();
 
   void Start();
-  void Reset();
+  void Reset(bool resetCongigure = false);
   void Dispose();
   void SendMessage(ToOutputMessage &msg);
   bool GetMessage(FromOutputMessage &msg, bool bWait);
@@ -103,4 +95,5 @@ protected:
   Pixmap    m_pixmap;
   GLXPixmap m_glPixmap;
   bool m_recover;
+  bool m_configuring;
 };

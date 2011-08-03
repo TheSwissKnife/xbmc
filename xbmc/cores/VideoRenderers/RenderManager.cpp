@@ -134,6 +134,10 @@ static double wrap(double x, double minimum, double maximum)
 void CXBMCRenderManager::WaitPresentTime(double presenttime)
 {
   double frametime;
+
+  if (m_bDrain)
+    return;
+
   int fps = g_VideoReferenceClock.GetRefreshRate(&frametime);
   if(fps <= 0)
   {
@@ -249,6 +253,7 @@ bool CXBMCRenderManager::Configure(unsigned int width, unsigned int height, unsi
     m_presentstep = PRESENT_IDLE;
     m_presentevent.Set();
     m_pClock = 0;
+    m_bDrain = false;
     g_graphicsContext.AllowSetResolution(false);
   }
 
@@ -894,4 +899,18 @@ void CXBMCRenderManager::ReleaseProcessor()
     return;
 
   m_pRenderer->ReleaseProcessor();
+}
+
+bool CXBMCRenderManager::Drain()
+{
+  m_bDrain = true;
+  if(!m_pRenderer)
+    return true;
+
+  int index = m_pRenderer->GetCurrentBufferIndex();
+  if (index == -1)
+    return true;
+
+  g_application.NewFrame();
+  return false;
 }

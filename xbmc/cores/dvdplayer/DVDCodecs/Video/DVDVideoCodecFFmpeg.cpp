@@ -457,6 +457,7 @@ unsigned int CDVDVideoCodecFFmpeg::SetFilters(unsigned int flags)
     flags &= ~FILTER_DEINTERLACE_ANY | FILTER_DEINTERLACE_YADIF;
   }
 
+  m_filters = flags;
   return flags;
 }
 
@@ -1014,6 +1015,9 @@ bool CDVDVideoCodecFFmpeg::GetPictureCommon(DVDVideoPicture* pDvdVideoPicture)
     pDvdVideoPicture->iDisplayHeight = ((int)RINT(pDvdVideoPicture->iWidth / aspect_ratio)) & -3;
   }
 
+  /* use forced aspect if any */
+  if(m_fForcedAspectRatio != 0.0f )
+    pDvdVideoPicture->iDisplayWidth = (int) (pDvdVideoPicture->iDisplayHeight * m_fForcedAspectRatio);
 
   pDvdVideoPicture->pts = DVD_NOPTS_VALUE;
 
@@ -1060,6 +1064,8 @@ bool CDVDVideoCodecFFmpeg::GetPictureCommon(DVDVideoPicture* pDvdVideoPicture)
 
   if(!m_started)
     pDvdVideoPicture->iFlags |= DVP_FLAG_DROPPED;
+
+  pDvdVideoPicture->iGroupId = m_iGroupId;
 
   return true;
 }

@@ -4051,7 +4051,12 @@ void CDVDPlayer::NotifyRefreshChanged()
     return;
 
   if (m_refreshChanging)
-    SetPlaySpeed(DVD_PLAYSPEED_NORMAL);
+  {
+    m_messenger.Put(new CDVDMsgInt(CDVDMsg::PLAYER_SETSPEED, DVD_PLAYSPEED_NORMAL));
+    m_dvdPlayerAudio.SetSpeed(DVD_PLAYSPEED_NORMAL);
+    m_dvdPlayerVideo.ResumeAfterRefreshChange();
+    SynchronizeDemuxer(100);
+  }
   m_refreshChanging = false;
 }
 

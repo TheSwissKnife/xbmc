@@ -40,6 +40,7 @@ CDVDPlayerVideoOutput::CDVDPlayerVideoOutput(CDVDPlayerVideo *videoplayer)
   m_pixmap = 0;
   m_glPixmap = 0;
   m_recover = true;
+  m_configuring = false;
 }
 
 CDVDPlayerVideoOutput::~CDVDPlayerVideoOutput()
@@ -52,8 +53,14 @@ void CDVDPlayerVideoOutput::Start()
   Create();
 }
 
-void CDVDPlayerVideoOutput::Reset()
+void CDVDPlayerVideoOutput::Reset(bool resetConfigure /* = false */)
 {
+  if (resetConfigure)
+  {
+    m_configuring = false;
+    return;
+  }
+
   if (m_recover)
     StopThread();
 
@@ -73,6 +80,7 @@ void CDVDPlayerVideoOutput::Dispose()
   m_toMsgSignal.Set();
   StopThread();
   m_recover = true;
+  m_configuring = false;
 }
 
 void CDVDPlayerVideoOutput::OnStartup()
@@ -147,15 +155,13 @@ double CDVDPlayerVideoOutput::GetPts()
 
 void CDVDPlayerVideoOutput::Process()
 {
-  bool flushed = false;
-
   CSingleLock lock(m_criticalSection);
   lock.Leave();
 
   while (!m_bStop)
   {
     lock.Enter();
-    if (!m_toOutputMessage.empty())
+    if (!m_toOutputMessage.empty() && !m_configuring)
     {
       if (m_recover)
       {
@@ -180,21 +186,18 @@ void CDVDPlayerVideoOutput::Process()
 
       if (gotPic)
       {
-        if (!flushed)
+        if (m_pVideoPlayer->CheckRenderConfig(&m_picture))
         {
-          fromMsg.iResult = m_pVideoPlayer->OutputPicture(&m_picture,m_pts);
-
-          if (fromMsg.iResult & EOS_FLUSH)
-          {
-            flushed = true;
-          }
+          fromMsg.iResult = EOS_CONFIGURE;
+          m_configuring = true;
         }
         else
-          fromMsg.iResult = EOS_FLUSH;
-
-        // guess next frame pts. iDuration is always valid
-        if (toMsg.iSpeed != 0)
-          m_pts += m_picture.iDuration * toMsg.iSpeed / abs(toMsg.iSpeed);
+        {
+          fromMsg.iResult = m_pVideoPlayer->OutputPicture(&m_picture,m_pts);
+          // guess next frame pts. iDuration is always valid
+          if (toMsg.iSpeed != 0)
+            m_pts += m_picture.iDuration * toMsg.iSpeed / abs(toMsg.iSpeed);
+        }
 
         lock.Enter();
         m_fromOutputMessage.push(fromMsg);
@@ -228,8 +231,6 @@ bool CDVDPlayerVideoOutput::GetPicture(ToOutputMessage toMsg, FromOutputMessage 
   {
     sPostProcessType.clear();
 
-    m_picture.iGroupId = toMsg.iGroupId;
-
     if(m_picture.iDuration == 0.0)
       m_picture.iDuration = toMsg.fFrameTime;
 
@@ -249,16 +250,14 @@ bool CDVDPlayerVideoOutput::GetPicture(ToOutputMessage toMsg, FromOutputMessage 
     else if (m_picture.pts == DVD_NOPTS_VALUE)
       m_picture.pts = m_picture.dts;
 
-    /* use forced aspect if any */
-    if( toMsg.fForcedAspectRatio != 0.0f )
-      picture.iDisplayWidth = (int) (picture.iDisplayHeight * toMsg.fForcedAspectRatio);
-
     //Deinterlace if codec said format was interlaced or if we have selected we want to deinterlace
     //this video
-    if(!(toMsg.iFilters & CDVDVideoCodec::FILTER_DEINTERLACE_ANY))
+    EINTERLACEMETHOD mInt = g_settings.m_currentVideoSettings.m_InterlaceMethod;
+    unsigned int mFilters = m_pVideoCodec->GetFilters();
+    if(!(mFilters & CDVDVideoCodec::FILTER_DEINTERLACE_ANY))
     {
-      if((toMsg.mInt == VS_INTERLACEMETHOD_DEINTERLACE)
-      || (toMsg.mInt == VS_INTERLACEMETHOD_AUTO && (picture.iFlags & DVP_FLAG_INTERLACED)
+      if((mInt == VS_INTERLACEMETHOD_DEINTERLACE)
+      || (mInt == VS_INTERLACEMETHOD_AUTO && (picture.iFlags & DVP_FLAG_INTERLACED)
                                           && !g_renderManager.Supports(VS_INTERLACEMETHOD_RENDER_BOB)))
       {
         if (!sPostProcessType.empty())
