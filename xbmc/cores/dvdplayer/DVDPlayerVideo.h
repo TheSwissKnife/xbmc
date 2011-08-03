@@ -96,6 +96,8 @@ public:
 
   void SetSpeed(int iSpeed);
   int OutputPicture(DVDVideoPicture* pPicture, double pts);
+  bool CheckRenderConfig(DVDVideoPicture* pPicture);
+  void ResumeAfterRefreshChange();
 
   // classes
   CDVDMessageQueue m_messageQueue;
@@ -113,7 +115,7 @@ protected:
 #define EOS_ABORT 1
 #define EOS_DROPPED 2
 #define EOS_VERYLATE 4
-#define EOS_FLUSH 8
+#define EOS_CONFIGURE 8
 
   void AutoCrop(DVDVideoPicture* pPicture);
   void AutoCrop(DVDVideoPicture *pPicture, RECT &crop);
@@ -159,8 +161,10 @@ protected:
     unsigned int color_transfer;
     double       framerate;
     bool         inited;
+    unsigned     flags;
   } m_output; //holds currently configured output
 
+  std::string  m_formatstr;
   bool m_bAllowFullscreen;
   bool m_bRenderSubs;
 

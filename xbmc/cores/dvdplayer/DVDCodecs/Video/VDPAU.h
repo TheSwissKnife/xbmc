@@ -146,6 +146,7 @@ public:
 
   pictureAge picAge;
   volatile bool  recover;
+  bool       clearedDown;
   vdpau_render_state *past[2], *current, *future[2];
   int        tmpDeint;
   bool       tmpPostProc;

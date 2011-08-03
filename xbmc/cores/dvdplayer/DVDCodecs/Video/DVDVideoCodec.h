@@ -271,4 +271,12 @@ public:
     return false;
   }
 
+  virtual void SetGroupId(int iGroup) {m_iGroupId = iGroup;};
+  virtual void SetForcedAspectRatio(float fForcedAspectRatio){m_fForcedAspectRatio = fForcedAspectRatio;};
+  virtual unsigned int GetFilters() { return m_filters; }
+
+protected:
+  int    m_iGroupId;
+  float  m_fForcedAspectRatio;
+  unsigned int  m_filters;
 };

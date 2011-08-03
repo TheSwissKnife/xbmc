@@ -81,6 +81,7 @@ public:
   unsigned int PreInit();
   void UnInit();
   void SetReconfigured();
+  bool Drain();
 
   void AddOverlay(CDVDOverlay* o, double pts)
   {
@@ -200,6 +201,7 @@ protected:
   CEvent     m_flipEvent;
   CDVDClock  *m_pClock;
   bool       m_late;
+  bool       m_bDrain;
 
   OVERLAY::CRenderer m_overlays;
 
