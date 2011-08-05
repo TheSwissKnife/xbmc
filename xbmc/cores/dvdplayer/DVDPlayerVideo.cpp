@@ -643,21 +643,18 @@ void CDVDPlayerVideo::Process()
             m_iNrOfPicturesNotToSkip--;
             toMsg.bNotToSkip = true;
           }
+          lock.Leave();
           m_pVideoOutput->SendMessage(toMsg);
 
           // wait until output stage has called GetPicture
-          int64_t wgt = CurrentHostCounter();
-          lock.Leave();
+//          int64_t wgt = CurrentHostCounter();
           bool bWait = m_pVideoCodec->WaitGetPicture();
-          lock.Enter();
 //          CLog::Log(LOGDEBUG,"CDVDPlayerVideo::Process WaitGetPicture() DUR: %"PRId64"", CurrentHostCounter() - wgt);
 
           // wait for message from output
           // block it decoder has no buffer
           FromOutputMessage fromMsg;
-          lock.Leave();
           bool bGotMsg = m_pVideoOutput->GetMessage(fromMsg, bWait);
-//          lock.Enter();
           while (bGotMsg)
           {
             iResult = fromMsg.iResult;
