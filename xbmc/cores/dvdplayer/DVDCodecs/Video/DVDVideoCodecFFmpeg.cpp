@@ -847,7 +847,8 @@ void CDVDVideoCodecFFmpeg::RecordPacketInfoInHist(int iInputPktNum, int64_t pts_
      iFrameFlags |= DVP_FLAG_DROPREQUESTED; //mark as a targetted drop for output stages to utilise if required
   m_input_hist[idx].flags = iFrameFlags;
   m_input_hist[idx].drop = bDecoderDropRequested; //not same as bDropRequested
-  //our guess if this is a field based input that won't have a matching output
+  // our guess if this is a field based input that won't have a matching output ie
+  // when we are expecting a decoded output this time we assume this next input will not have an output frame
   m_input_hist[idx].field_no_out = m_bFieldInputMode && m_bExpectingDecodedFrame;
   m_input_hist[idx].input_pos = iInputPktNum;
 }
