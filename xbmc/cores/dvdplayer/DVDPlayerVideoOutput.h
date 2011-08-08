@@ -65,7 +65,7 @@ public:
   virtual ~CDVDPlayerVideoOutput();
 
   void Start();
-  void Reset(bool resetCongigure = false);
+  void Reset(bool resetConfigure = false);
   void Dispose();
   void SendMessage(ToOutputMessage &msg);
   bool GetMessage(FromOutputMessage &msg, bool bWait);
