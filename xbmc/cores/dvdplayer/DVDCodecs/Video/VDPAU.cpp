@@ -2402,6 +2402,8 @@ GLuint CVDPAU::GLGetSurfaceTexture(int plane, int field, int flipBufferIdx)
 {
   GLuint glReturn = 0;
 
+#ifdef GL_NV_vdpau_interop
+
   //check if current output method is valid
   if (m_GlInteropStatus != m_vdpauOutputMethod)
   {
@@ -2445,6 +2447,8 @@ GLuint CVDPAU::GLGetSurfaceTexture(int plane, int field, int flipBufferIdx)
   }
   else
     CLog::Log(LOGWARNING, "CVDPAU::GLGetSurfaceTexture - no picture, index %d", flipBufferIdx);
+
+#endif
 
   return glReturn;
 }
