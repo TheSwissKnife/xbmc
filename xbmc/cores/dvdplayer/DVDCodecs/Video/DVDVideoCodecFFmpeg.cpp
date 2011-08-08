@@ -892,14 +892,14 @@ void CDVDVideoCodecFFmpeg::SetFrameFlagsFromHist(int iInputPktNum)
         if ((m_input_hist[bestmatch].field_no_out) || (m_iMaxDecoderIODelay < delay) ||
             (m_input_hist[bestmatch].input_pos > iInputPktNum))
         {
-           CLog::Log(LOGDEBUG,"CDVDVideoCodecFFmpeg::SetFrameFlags() decoder history search matched on unexpected data pts: %f, field_no_out: %i, drop: %i, flags: %i, input_pos: %i, current input packet number: %i", 
+           CLog::Log(LOGNOTICE,"CDVDVideoCodecFFmpeg::SetFrameFlags() decoder history search matched on unexpected data pts: %f, field_no_out: %i, drop: %i, flags: %i, input_pos: %i, current input packet number: %i", 
                pts_itod(m_input_hist[bestmatch].pts_opaque), (int)m_input_hist[bestmatch].field_no_out,
                (int)m_input_hist[bestmatch].drop, m_input_hist[bestmatch].flags, 
                m_input_hist[bestmatch].input_pos, iInputPktNum);
            // if not more than 5 increase in io delay then adjust our maximum to it
            if ((m_iMaxDecoderIODelay < delay) && (m_iMaxDecoderIODelay + 5 >= delay))
            {
-              CLog::Log(LOGDEBUG,"CDVDVideoCodecFFmpeg::SetFrameFlags() decoder history search, increasing max delay to %i", delay); 
+              CLog::Log(LOGNOTICE,"CDVDVideoCodecFFmpeg::SetFrameFlags() decoder history search, increasing max delay to %i", delay); 
               m_iMaxDecoderIODelay = delay;
            }
         }
@@ -909,7 +909,10 @@ void CDVDVideoCodecFFmpeg::SetFrameFlagsFromHist(int iInputPktNum)
         // for the gain (ableit much lesser) that will offer
         if (m_input_hist[bestmatch].drop &&
             m_iDecoderDropRequest > 10 * m_iDecoderDrop && m_iDecoderDropRequest > 10)
+        {
+           CLog::Log(LOGNOTICE,"CDVDVideoCodecFFmpeg::SetFrameFlags() decoder dropping appears to be ineffective, marking decoded frame as dropped for later output stages (m_iDecoderDrop: %i m_iDecoderDropRequest: %i)", m_iDecoderDrop, m_iDecoderDropRequest);
            m_iFrameFlags |= DVP_FLAG_DROPPED;
+        }
 
      }
      else // we couldn't find our pts!
