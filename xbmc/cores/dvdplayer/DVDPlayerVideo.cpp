@@ -301,6 +301,10 @@ void CDVDPlayerVideo::OnStartup()
   CSingleLock lock(m_criticalSection);
 
   m_iDroppedFrames = 0;
+  m_iDecoderDroppedFrames = 0;
+  m_iDecoderPresentDroppedFrames = 0;
+  m_iOutputDroppedFrames = 0;
+  m_iPlayerDropRequests = 0;
 
   m_crop.x1 = m_crop.x2 = 0.0f;
   m_crop.y1 = m_crop.y2 = 0.0f;
@@ -834,10 +838,10 @@ void CDVDPlayerVideo::Process()
           break;
 
         // the decoder didn't need more data, flush the remaning buffer
-        lock.Leave();
         drophint = VC_HINT_HURRYUP;
         if ((m_speed != DVD_PLAYSPEED_NORMAL) && (m_speed != DVD_PLAYSPEED_PAUSE))
            drophint |= VC_HINT_NOPOSTPROC;
+        lock.Leave();
         m_pVideoCodec->SetDropState(bRequestDrop);
         m_pVideoCodec->SetDropHint(drophint);
         drophint = 0;
@@ -874,14 +878,14 @@ int CDVDPlayerVideo::CalcDropRequirement()
 
 // temporary
   double fCurAbsClock;
-  double fCurClock = m_pClock->GetClock(&fCurAbsClock);
+  double fCurClock = m_pClock->GetClock(fCurAbsClock, true);
   iDPlaySpeed = m_speed;
   if (m_iCurrentPts == DVD_NOPTS_VALUE || iDPlaySpeed == 0)
      return 0;
   double fDPts = m_iCurrentPts + ((fCurAbsClock - m_iCurrentPtsClock) * iDPlaySpeed / DVD_PLAYSPEED_NORMAL);
 // end temporary
   //proper:
-  //double fCurClock = m_pClock->GetClock();
+  //double fCurClock = m_pClock->GetClock(true);
   //double fDPts = g_renderManger.GetDisplayPts(&iDPlaySpeed);
 
   int64_t Now = CurrentHostCounter();
@@ -924,7 +928,7 @@ int CDVDPlayerVideo::CalcDropRequirement()
   if (m_pClock->IsPaused())
      iClockSpeed = DVD_PLAYSPEED_PAUSE;
 
-CLog::Log(LOGDEBUG,"ASB: CalcDropRequirement INIT iClockSpeed: %i iDPlaySpeed: %i fFrameRate: %f fCurClock: %f fDInterval: %f iCalcId: %i fDPts: %f", iClockSpeed, iDPlaySpeed, fFrameRate, fCurClock, fDInterval, iCalcId, fDPts);
+//CLog::Log(LOGDEBUG,"ASB: CalcDropRequirement INIT iClockSpeed: %i iDPlaySpeed: %i fFrameRate: %f fCurClock: %f fDInterval: %f iCalcId: %i fDPts: %f", iClockSpeed, iDPlaySpeed, fFrameRate, fCurClock, fDInterval, iCalcId, fDPts);
 
   // if paused or in transient speed change just reset anything sensible and return 0
   if (iClockSpeed != iDPlaySpeed || iDPlaySpeed == DVD_PLAYSPEED_PAUSE || iClockSpeed == DVD_PLAYSPEED_PAUSE)
@@ -937,7 +941,7 @@ CLog::Log(LOGDEBUG,"ASB: CalcDropRequirement INIT iClockSpeed: %i iDPlaySpeed: %
   if (m_dropinfo.iPlaySpeed != iDPlaySpeed ||
       m_dropinfo.fFrameRate != fFrameRate || m_dropinfo.fDInterval != fDInterval || bClockInterrupted)
   {
-CLog::Log(LOGDEBUG,"ASB: CalcDropRequirement CHANGE RESET iClockSpeed: %i iDPlaySpeed: %i fFrameRate: %f m_dropinfo.fFrameRate: %f m_dropinfo.fDInterval: %f fDInterval: %f", iClockSpeed, iDPlaySpeed, fFrameRate, m_dropinfo.fFrameRate, m_dropinfo.fDInterval, fDInterval);
+//CLog::Log(LOGDEBUG,"ASB: CalcDropRequirement CHANGE RESET iClockSpeed: %i iDPlaySpeed: %i fFrameRate: %f m_dropinfo.fFrameRate: %f m_dropinfo.fDInterval: %f fDInterval: %f", iClockSpeed, iDPlaySpeed, fFrameRate, m_dropinfo.fFrameRate, m_dropinfo.fDInterval, fDInterval);
      for (int i = 0; i < DROPINFO_SAMPBUFSIZE; i++)
      {
         m_dropinfo.fLatenessSamp[i] = 0.0;
@@ -962,7 +966,7 @@ CLog::Log(LOGDEBUG,"ASB: CalcDropRequirement CHANGE RESET iClockSpeed: %i iDPlay
      m_dropinfo.fDInterval = fDInterval;
      m_dropinfo.fFrameRate = fFrameRate;
      m_dropinfo.iVeryLateCount = 0;
-CLog::Log(LOGDEBUG,"ASB: CalcDropRequirement CHANGE RESET DONE iClockSpeed: %i iDPlaySpeed: %i fFrameRate: %f m_dropinfo.fFrameRate: %f m_dropinfo.fDInterval: %f fDInterval: %f", iClockSpeed, iDPlaySpeed, fFrameRate, m_dropinfo.fFrameRate, m_dropinfo.fDInterval, fDInterval);
+//CLog::Log(LOGDEBUG,"ASB: CalcDropRequirement CHANGE RESET DONE iClockSpeed: %i iDPlaySpeed: %i fFrameRate: %f m_dropinfo.fFrameRate: %f m_dropinfo.fDInterval: %f fDInterval: %f", iClockSpeed, iDPlaySpeed, fFrameRate, m_dropinfo.fFrameRate, m_dropinfo.fDInterval, fDInterval);
   }
 
   if (iDPlaySpeed > 0)
@@ -975,17 +979,17 @@ CLog::Log(LOGDEBUG,"ASB: CalcDropRequirement CHANGE RESET DONE iClockSpeed: %i i
      m_dropinfo.iCurSampIdx = (curidx + 1) % DROPINFO_SAMPBUFSIZE;
 
      double fLateness = fCurClock - fDPts - fLatenessThreshold;
-CLog::Log(LOGDEBUG,"ASB: CalcDropRequirement iDPlaySpeed > 0 curidx: %i m_dropinfo.fLatenessSamp[curidx]: %f, fCurClock: %f m_dropinfo.fClockSamp[curidx]: %f m_dropinfo.iDecoderDropSamp[curidx]: %i fLateness: %f", curidx, m_dropinfo.fLatenessSamp[curidx], fCurClock, m_dropinfo.fClockSamp[curidx], m_dropinfo.iDecoderDropSamp[curidx], fLateness);
+//CLog::Log(LOGDEBUG,"ASB: CalcDropRequirement iDPlaySpeed > 0 curidx: %i m_dropinfo.fLatenessSamp[curidx]: %f, fCurClock: %f m_dropinfo.fClockSamp[curidx]: %f m_dropinfo.iDecoderDropSamp[curidx]: %i fLateness: %f", curidx, m_dropinfo.fLatenessSamp[curidx], fCurClock, m_dropinfo.fClockSamp[curidx], m_dropinfo.iDecoderDropSamp[curidx], fLateness);
 
      if (Now - m_dropinfo.iLastOutputPictureTime > 150 * CurrentHostFrequency() / 1000 || m_iNrOfPicturesNotToSkip > 0)
      {
         //we aim to not drop at all when we have not output in say 150ms or we have been asked not to skip
-CLog::Log(LOGDEBUG,"ASB: CalcDropRequirement CurrentHostCounter() CurrentHostCounter(): %"PRId64", m_dropinfo.iLastOutputPictureTime: %"PRId64"", CurrentHostCounter(), m_dropinfo.iLastOutputPictureTime);
+//CLog::Log(LOGDEBUG,"ASB: CalcDropRequirement CurrentHostCounter() CurrentHostCounter(): %"PRId64", m_dropinfo.iLastOutputPictureTime: %"PRId64"", CurrentHostCounter(), m_dropinfo.iLastOutputPictureTime);
         m_dropinfo.iDropNextFrame = 0;
      }
      else if (!m_bAllowDrop)
      {
-CLog::Log(LOGDEBUG,"ASB: CalcDropRequirement (!m_bAllowDrop)");
+//CLog::Log(LOGDEBUG,"ASB: CalcDropRequirement (!m_bAllowDrop)");
         // drop on output at intervals in line with lateness
         m_dropinfo.iDropNextFrame = 0;
         if (fLateness > DVD_MSEC_TO_TIME(50))
@@ -1003,7 +1007,7 @@ CLog::Log(LOGDEBUG,"ASB: CalcDropRequirement (!m_bAllowDrop)");
      else if (fLateness > DVD_MSEC_TO_TIME(500))
      {
         // drop urgently in decoder and on output too if we did not drop on output last time
-        CLog::Log(LOGDEBUG,"ASB: CalcDropRequirement fLateness > DVD_MSEC_TO_TIME(500)");
+        //CLog::Log(LOGDEBUG,"ASB: CalcDropRequirement fLateness > DVD_MSEC_TO_TIME(500)");
         if (m_dropinfo.iSuccessiveOutputDropRequests == 1)
            m_dropinfo.iDropNextFrame = DC_DECODER | DC_URGENT;
         else
@@ -1013,7 +1017,7 @@ CLog::Log(LOGDEBUG,"ASB: CalcDropRequirement (!m_bAllowDrop)");
      }
      else if (fLateness > DVD_MSEC_TO_TIME(250))
      {
-        CLog::Log(LOGDEBUG,"ASB: CalcDropRequirement fLateness > DVD_MSEC_TO_TIME(250)");
+        //CLog::Log(LOGDEBUG,"ASB: CalcDropRequirement fLateness > DVD_MSEC_TO_TIME(250)");
         // decoder drop request skipping this every 4 or 5
         if (m_dropinfo.iSuccessiveDecoderDropRequests <= 3 + iOsc + iDropMore)
            m_dropinfo.iDropNextFrame = DC_DECODER;
