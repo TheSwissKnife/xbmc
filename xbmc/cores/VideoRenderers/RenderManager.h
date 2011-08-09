@@ -72,7 +72,8 @@ public:
   bool Configure(unsigned int width, unsigned int height, unsigned int d_width, unsigned int d_height, float fps, unsigned flags, bool &bResChange);
   bool IsConfigured();
 
-  int AddVideoPicture(DVDVideoPicture& picture, int source, double presenttime, EFIELDSYNC sync, CDVDClock *clock, bool &late);
+//  int AddVideoPicture(DVDVideoPicture& picture, int source, double presenttime, EFIELDSYNC sync, CDVDClock *clock, bool &late);
+  int AddVideoPicture(DVDVideoPicture& picture, int source, double pts, double presenttime, EFIELDSYNC sync, int playspeed);
 
   void FlipPage(volatile bool& bStop, double timestamp = 0.0, int source = -1, EFIELDSYNC sync = FS_NONE);
   int WaitForBuffer(volatile bool& bStop);
@@ -199,8 +200,8 @@ protected:
   int        m_presentsource;
   CEvent     m_presentevent;
   CEvent     m_flipEvent;
-  CDVDClock  *m_pClock;
-  bool       m_late;
+//  CDVDClock  *m_pClock;
+//  bool       m_late;
   bool       m_bDrain;
 
   OVERLAY::CRenderer m_overlays;

@@ -347,6 +347,8 @@ int CLinuxRendererGL::GetImage(YV12Image *image, int source, bool readonly)
   image->cshift_y = im.cshift_y;
   image->pPresenttime = &im.presenttime;
   image->pSync    = &im.sync;
+  image->pPts = &im.pts;
+  image->pPlaySpeed = &im.playspeed;
 
   return source;
 
