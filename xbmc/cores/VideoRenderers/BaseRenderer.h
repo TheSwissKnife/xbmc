@@ -48,9 +48,13 @@ typedef struct YV12Image
 
   double   presenttime;
   EFIELDSYNC sync;
+  double   pts;
+  int playspeed;
 
   double  *pPresenttime;
   EFIELDSYNC *pSync;
+  double *pPts;
+  int *pPlaySpeed;
 } YV12Image;
 
 enum ERENDERFEATURE
