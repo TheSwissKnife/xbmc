@@ -643,7 +643,6 @@ void CDVDPlayerVideo::Process()
         }
       }
 
-
       m_videoStats.AddSampleBytes(pPacket->iSize);
 
       // loop while no error
@@ -658,9 +657,13 @@ void CDVDPlayerVideo::Process()
               if (iDecoderState & (VC_DECODERBIFIELDDROP | VC_DECODERFRAMEDROP))
               {
                  m_iDecoderDroppedFrames++;
+                 CLog::Log(LOGNOTICE, "CDVDPlayerVideo decoder drop m_iDecoderDroppedFrames: %i", m_iDecoderDroppedFrames);
               }
               else if (iDecoderState & VC_PRESENTDROP)
+              {
                  m_iDecoderPresentDroppedFrames++;
+                 CLog::Log(LOGNOTICE, "CDVDPlayerVideo decoder present drop m_iDecoderPresentDroppedFrames: %i", m_iDecoderPresentDroppedFrames);
+              }
               m_bJustDropped = true;
               m_pullupCorrection.Flush(); //dropped frames mess up the pattern, so just flush it
            }
@@ -813,6 +816,7 @@ void CDVDPlayerVideo::Process()
             {
               m_iDroppedFrames++;
               m_iOutputDroppedFrames++;
+              CLog::Log(LOGNOTICE, "CDVDPlayerVideo output drop m_iOutputDroppedFrames: %i", m_iOutputDroppedFrames);
               m_bJustDropped = true;
             }
             else
@@ -1085,7 +1089,7 @@ int CDVDPlayerVideo::CalcDropRequirement()
               break; // assume we have moved back to a slot with no sample
            if (fPrevClockSamp != DVD_NOPTS_VALUE && (fPrevClockSamp - m_dropinfo.fClockSamp[i] > DVD_MSEC_TO_TIME(500) || m_dropinfo.fClockSamp[i] > fPrevClockSamp))
            {
-CLog::Log(LOGDEBUG,"ASB: CalcDropRequirement fPrevClockSamp: %f m_dropinfo.fClockSamp[i]: %f", fPrevClockSamp, m_dropinfo.fClockSamp[i]);
+//CLog::Log(LOGDEBUG,"ASB: CalcDropRequirement fPrevClockSamp: %f m_dropinfo.fClockSamp[i]: %f", fPrevClockSamp, m_dropinfo.fClockSamp[i]);
               break; // assume we have moved back to a sample that shows a discontinuity (eg seek or speed change)
            }
 
@@ -1146,7 +1150,7 @@ CLog::Log(LOGDEBUG,"ASB: CalcDropRequirement fPrevClockSamp: %f m_dropinfo.fCloc
            else if (iDPlaySpeed == 4 * DVD_PLAYSPEED_NORMAL)
                m_dropinfo.fDropRatioLast4X = m_dropinfo.fDropRatio;
 
-CLog::Log(LOGDEBUG,"ASB: CalcDropRequirement m_dropinfo.fDropRatio: %f fLatenessAvgTMinus1: %f fSampleSumTMinus1: %f iSampleNumTMinus1: %i fLatenessThreshold: %f fLatenessAvgT: %f fLatenessAvgTMinus1: %f fClockMidT: %f fClockMidTMinus1: %f fDecoderDropRatioT: %f fDecoderDropRatioTMinus1: %f", m_dropinfo.fDropRatio, fLatenessAvgTMinus1, fSampleSumTMinus1, iSampleNumTMinus1, fLatenessThreshold, fLatenessAvgT, fLatenessAvgTMinus1, fClockMidT, fClockMidTMinus1, fDecoderDropRatioT, fDecoderDropRatioTMinus1);
+//CLog::Log(LOGDEBUG,"ASB: CalcDropRequirement m_dropinfo.fDropRatio: %f fLatenessAvgTMinus1: %f fSampleSumTMinus1: %f iSampleNumTMinus1: %i fLatenessThreshold: %f fLatenessAvgT: %f fLatenessAvgTMinus1: %f fClockMidT: %f fClockMidTMinus1: %f fDecoderDropRatioT: %f fDecoderDropRatioTMinus1: %f", m_dropinfo.fDropRatio, fLatenessAvgTMinus1, fSampleSumTMinus1, iSampleNumTMinus1, fLatenessThreshold, fLatenessAvgT, fLatenessAvgTMinus1, fClockMidT, fClockMidTMinus1, fDecoderDropRatioT, fDecoderDropRatioTMinus1);
         }
 
         // now if drop ratio is low ignore it and if late proper choose a drop request interval based on lateness
@@ -1219,9 +1223,11 @@ CLog::Log(LOGDEBUG,"ASB: CalcDropRequirement m_dropinfo.fDropRatio: %f fLateness
         {
               m_dropinfo.iVeryLateCount = 0;
         }
-           // if we have not requested a drop so far and we are not late check the drift, update the dropPS and drop if we are close to being late and current dropPS dictates?
-CLog::Log(LOGDEBUG,"ASB: CalcDropRequirement bGotSamplesT: %i bGotSamplesTMinus1: %i iLastDecoderDropRequestCalcId: %i fLatenessAvgT: %f fLatenessAvgTMinus1: %f iOsc: %i iCalcId: %i m_dropinfo.iDropNextFrame: %i iDropRequestDistance: %i iDropMore: %i m_dropinfo.fDropRatio: %f", (int)bGotSamplesT, (int)bGotSamplesTMinus1, iLastDecoderDropRequestCalcId, fLatenessAvgT, fLatenessAvgTMinus1, iOsc, iCalcId, m_dropinfo.iDropNextFrame, iDropRequestDistance, iDropMore, m_dropinfo.fDropRatio);
+// if we have not requested a drop so far and we are not late check the drift, update the dropPS and drop if we are close to being late and current dropPS dictates?
+//CLog::Log(LOGDEBUG,"ASB: CalcDropRequirement bGotSamplesT: %i bGotSamplesTMinus1: %i iLastDecoderDropRequestCalcId: %i fLatenessAvgT: %f fLatenessAvgTMinus1: %f iOsc: %i iCalcId: %i m_dropinfo.iDropNextFrame: %i iDropRequestDistance: %i iDropMore: %i m_dropinfo.fDropRatio: %f", (int)bGotSamplesT, (int)bGotSamplesTMinus1, iLastDecoderDropRequestCalcId, fLatenessAvgT, fLatenessAvgTMinus1, iOsc, iCalcId, m_dropinfo.iDropNextFrame, iDropRequestDistance, iDropMore, m_dropinfo.fDropRatio);
      }
+if (m_dropinfo.iDropNextFrame)
+CLog::Log(LOGNOTICE, "CDVDPlayerVideo m_dropinfo.iDropNextFrame: %i lateness: %f", m_dropinfo.iDropNextFrame, fLateness);
   }
   else if (iDPlaySpeed < 0)
   {
