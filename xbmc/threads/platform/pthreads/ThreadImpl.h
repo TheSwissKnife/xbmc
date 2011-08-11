@@ -34,6 +34,6 @@ typedef int THREADFUNC;
 
 namespace XbmcThreads
 {
-  inline static void ThreadSleep(unsigned int millis) { usleep(millis); }
+  inline static void ThreadSleep(unsigned int millis) { usleep(millis*1000); }
 }
 
