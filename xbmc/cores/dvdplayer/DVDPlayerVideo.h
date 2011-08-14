@@ -125,14 +125,14 @@ protected:
   void ResetDropInfo();
 
 #ifdef HAS_VIDEO_PLAYBACK
-  void ProcessOverlays(DVDVideoPicture* pSource, double pts);
+  int ProcessOverlays(DVDVideoPicture* pSource, double pts);
 #endif
   void ProcessVideoUserData(DVDVideoUserData* pVideoUserData, double pts);
 
   double m_iCurrentPts; // last pts displayed
   double m_iVideoDelay;
   double m_iSubtitleDelay;
-  double m_FlipTimeStamp; // time stamp of last flippage. used to play at a forced framerate
+//  double m_FlipTimeStamp; // time stamp of last flippage. used to play at a forced framerate
 
 //  int m_iLateFrames;
 //  int m_iDroppedFrames;
@@ -206,7 +206,7 @@ protected:
   int m_iDroppedFrames;
   int m_iPlayerDropRequests;
 
-  double m_iCurrentPtsClock; //temporary
+//  double m_iCurrentPtsClock; //temporary
 
   std::string  m_formatstr;
   bool m_bAllowFullscreen;

@@ -1580,7 +1580,7 @@ int CVDPAU::Decode(AVCodecContext *avctx, AVFrame *pFrame, bool bDrain)
   int usedPics, msgs;
   int iter = 0;
   // hard cap usedPics queue to 1 for interop rgb, 4 for pixmap (evaluated after processing any presentable pic)
-  int cappedQueueSize = (m_vdpauOutputMethod == OUTPUT_PIXMAP) ? 4 : 1;
+  int cappedQueueSize = (m_vdpauOutputMethod == OUTPUT_PIXMAP) ? 5 : 1;
   retval = 0;
   while (1)
   {
@@ -1720,6 +1720,7 @@ bool CVDPAU::GetPicture(AVCodecContext* avctx, AVFrame* frame, DVDVideoPicture* 
 {
   { CSingleLock lock(m_outPicSec);
 
+    //TODO: ensure dvd video player also calls DiscardPresentPicture when it drops on output
     if (DiscardPresentPicture())
       CLog::Log(LOGDEBUG,"CVDPAU::GetPicture: old presentPicture still valid");
     if (m_usedOutPic.size() > 0)

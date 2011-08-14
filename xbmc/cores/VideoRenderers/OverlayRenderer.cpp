@@ -31,6 +31,7 @@
 #include "windowing/WindowingFactory.h"
 #include "settings/Settings.h"
 #include "threads/SingleLock.h"
+#include "utils/log.h"
 #if defined(HAS_GL) || defined(HAS_GLES)
 #include "OverlayRendererGL.h"
 #elif defined(HAS_DX)
@@ -89,12 +90,16 @@ long COverlayMainThread::Release()
 CRenderer::CRenderer()
 {
   m_render = 0;
-  m_decode = (m_render + 1) % 2;
+  m_decode = 0;
+  m_displayedrender = 0;
+  m_lastdisplayedrender = -1;
+  //m_decode = (m_render + 1) % 2;
 }
 
 CRenderer::~CRenderer()
 {
-  for(int i = 0; i < 2; i++)
+  //for(int i = 0; i < 2; i++)
+  for(int i = 0; i < NUM_OVERLAYBUFFERS; i++)
     Release(m_buffers[i]);
 }
 
@@ -114,7 +119,6 @@ void CRenderer::AddOverlay(CDVDOverlay* o, double pts)
 void CRenderer::AddOverlay(COverlay* o, double pts)
 {
   CSingleLock lock(m_section);
-
   SElement   e;
   e.pts = pts;
   e.overlay = o->Acquire();
@@ -154,20 +158,56 @@ void CRenderer::Flush()
 {
   CSingleLock lock(m_section);
 
-  for(int i = 0; i < 2; i++)
+  //for(int i = 0; i < 2; i++)
+  for(int i = 0; i < NUM_OVERLAYBUFFERS; i++)
     Release(m_buffers[i]);
 
   Release(m_cleanup);
 }
 
-void CRenderer::Flip()
+//void CRenderer::Flip()
+//{
+//  CSingleLock lock(m_section);
+//
+//  m_render = m_decode;
+//  m_decode =(m_decode + 1) % 2;
+//
+//  Release(m_buffers[m_decode]);
+//}
+
+int CRenderer::FlipRender()
 {
   CSingleLock lock(m_section);
 
-  m_render = m_decode;
-  m_decode =(m_decode + 1) % 2;
+  if (m_render == m_decode)
+     return -1;
+  m_render = (m_render + 1) % NUM_OVERLAYBUFFERS;
+  return m_render;
+}
+
+void CRenderer::NotifyDisplayFlip()
+{
+  CSingleLock lock(m_section);
+
+  int last = m_displayedrender;
+  m_displayedrender = (m_render - 1 + NUM_OVERLAYBUFFERS) % NUM_OVERLAYBUFFERS;
+  if (m_displayedrender == last)
+     m_displayedrender = m_render;
+  m_lastdisplayedrender = last;
+}
+
+int CRenderer::FlipOutput()
+{
+  // assume we need not check against render buffer index as we should be safely 
+  // paced by video render (and have at least as many buffers)
+  CSingleLock lock(m_section);
+
+  if (m_decode == m_displayedrender && m_render != m_displayedrender)
+     return -1;
+  m_decode = (m_decode + 1) % NUM_OVERLAYBUFFERS;
 
   Release(m_buffers[m_decode]);
+  return m_decode;
 }
 
 void CRenderer::Render()

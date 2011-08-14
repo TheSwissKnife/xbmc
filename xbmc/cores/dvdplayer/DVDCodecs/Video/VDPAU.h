@@ -306,7 +306,7 @@ protected:
   std::deque<OutputPicture*> m_freeOutPic;
   std::deque<OutputPicture*> m_usedOutPic;
   OutputPicture *m_presentPicture;
-  OutputPicture *m_flipBuffer[3];
+  OutputPicture *m_flipBuffer[4];
   unsigned int m_mixerCmd;
   CCriticalSection m_mixerSec, m_outPicSec, m_videoSurfaceSec, m_flipSec;
   CEvent m_picSignal;

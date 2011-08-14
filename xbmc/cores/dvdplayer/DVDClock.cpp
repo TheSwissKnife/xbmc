@@ -77,17 +77,16 @@ double CDVDClock::GetNextAbsoluteClockTick(double target)
   CSingleLock lock(m_systemsection);
   CheckSystemClock();
 
-  int64_t systemtarget, freq, offset;
-  freq   = m_systemFrequency;
-  offset = m_systemOffset;
+  int64_t systemtarget, system;
 
   lock.Leave();
 
-  systemtarget = (int64_t)(target / DVD_TIME_BASE * (double)freq);
-  systemtarget += offset;
-  systemtarget = g_VideoReferenceClock.GetNextTickTime(systemtarget);
-  systemtarget -= offset;
-  return (double)systemtarget / freq * DVD_TIME_BASE;
+  systemtarget = AbsoluteToSystem(target);
+  system = g_VideoReferenceClock.GetNextTickTime(systemtarget);
+  if (system == (int64_t)-1)
+     return DVD_NOPTS_VALUE;
+
+  return SystemToAbsolute(system);
 }
 
 double CDVDClock::WaitAbsoluteClock(double target, double* WaitClockDur /*= 0 */)
@@ -95,9 +94,8 @@ double CDVDClock::WaitAbsoluteClock(double target, double* WaitClockDur /*= 0 */
   CSingleLock lock(m_systemsection);
   CheckSystemClock();
 
-  int64_t systemtarget, freq, offset;
-  freq   = m_systemFrequency;
-  offset = m_systemOffset;
+  int64_t systemtarget, system, freq;
+  freq = m_systemFrequency;
 
   lock.Leave();
 
@@ -105,14 +103,12 @@ double CDVDClock::WaitAbsoluteClock(double target, double* WaitClockDur /*= 0 */
   if (!WaitClockDur)
      WaitedTime = 0;
      
-  systemtarget = (int64_t)(target / DVD_TIME_BASE * (double)freq);
-  systemtarget += offset;
-  systemtarget = g_VideoReferenceClock.Wait(systemtarget, WaitedTime);
-  systemtarget -= offset;
+  systemtarget = AbsoluteToSystem(target);
+  system = g_VideoReferenceClock.Wait(systemtarget, WaitedTime);
   if (WaitedTime)
      *WaitClockDur = *WaitedTime / freq * DVD_TIME_BASE;
 
-  return (double)systemtarget / freq * DVD_TIME_BASE;
+  return SystemToAbsolute(system);
 }
 
 double CDVDClock::GetClock(bool interpolated /*= true*/)
@@ -261,6 +257,11 @@ void CDVDClock::CheckSystemClock()
 double CDVDClock::SystemToAbsolute(int64_t system)
 {
   return DVD_TIME_BASE * (double)(system - m_systemOffset) / m_systemFrequency;
+}
+
+int64_t CDVDClock::AbsoluteToSystem(double absolute)
+{
+  return (int64_t)(absolute / DVD_TIME_BASE * (double)m_systemFrequency) + m_systemOffset;
 }
 
 double CDVDClock::SystemToPlaying(int64_t system)

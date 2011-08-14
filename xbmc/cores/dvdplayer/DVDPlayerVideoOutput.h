@@ -96,4 +96,5 @@ protected:
   GLXPixmap m_glPixmap;
   bool m_recover;
   bool m_configuring;
+  bool m_outputprevpic;
 };

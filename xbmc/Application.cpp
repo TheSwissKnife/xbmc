@@ -2079,7 +2079,7 @@ void CApplication::Render()
   if (flip)
   {
     g_graphicsContext.Flip(g_windowManager.GetDirty());
-    g_renderManager.NotifyFlip();
+    g_renderManager.NotifyDisplayFlip();
   }
   CTimeUtils::UpdateFrameTime(flip);
 
