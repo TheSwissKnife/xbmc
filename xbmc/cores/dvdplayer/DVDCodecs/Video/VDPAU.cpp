@@ -33,6 +33,7 @@
 #include "settings/AdvancedSettings.h"
 #include "Application.h"
 #include "utils/MathUtils.h"
+#include "utils/TimeUtils.h"
 #include "DVDCodecs/DVDCodecUtils.h"
 #include "cores/VideoRenderers/RenderFlags.h"
 
@@ -54,12 +55,15 @@ CVDPAU::Desc decoder_profiles[] = {
 };
 const size_t decoder_profile_count = sizeof(decoder_profiles)/sizeof(CVDPAU::Desc);
 
+// TODO: This matrix is for BT709 only and is probably slighly out - derive from first principles instead
 static float studioCSC[3][4] =
 {
     { 1.0f,        0.0f, 1.57480000f,-0.78740000f},
     { 1.0f,-0.18737736f,-0.46813736f, 0.32775736f},
     { 1.0f, 1.85556000f,        0.0f,-0.92780000f}
 };
+static float studioCSCKCoeffs601[3] = {0.299, 0.587, 0.114};  //BT601 {Kr, Kg, Kb}
+static float studioCSCKCoeffs709[3] = {0.2126, 0.7152, 0.0722};  //BT709 {Kr, Kg, Kb}
 
 static struct SInterlaceMapping
 {
@@ -110,8 +114,9 @@ CVDPAU::CVDPAU() : CThread("CVDPAU")
   clearedDown = false;
   m_mixerfield = VDP_VIDEO_MIXER_PICTURE_STRUCTURE_FRAME;
   m_mixerstep  = 0;
+  m_outPicsNum = std::min(NUM_OUTPUT_SURFACES, NUM_OUTPUT_PICS);
 
-  for (int i=0;i<NUM_OUTPUT_SURFACES;i++)
+  for (int i=0;i<NUM_OUTPUT_PICS;i++)
   {
     m_allOutPic[i].pixmap = 0;
     m_allOutPic[i].glPixmap = 0;
@@ -122,9 +127,12 @@ CVDPAU::CVDPAU() : CThread("CVDPAU")
   if (!glXReleaseTexImageEXT)
     glXReleaseTexImageEXT = (PFNGLXRELEASETEXIMAGEEXTPROC)glXGetProcAddress((GLubyte *) "glXReleaseTexImageEXT");
 
+  m_preBindPixmapsDone = false;
   m_GlInteropStatus = OUTPUT_NONE;
   m_renderThread = NULL;
-  m_presentPicture = m_flipBuffer[0] = m_flipBuffer[1] = m_flipBuffer[2] = NULL;
+  m_presentPicture = NULL;
+  for (int i = 0; i < NUM_RENDERBUF_PICS; i++)
+      m_flipBuffer[i] = NULL;
 
 #ifdef GL_NV_vdpau_interop
   if (glewIsSupported("GL_NV_vdpau_interop"))
@@ -174,12 +182,13 @@ CVDPAU::CVDPAU() : CThread("CVDPAU")
     outputSurfaces[i] = VDP_INVALID_HANDLE;
 
   videoMixer = VDP_INVALID_HANDLE;
-  for (int i = 0; i < NUM_OUTPUT_SURFACES; i++)
+  for (int i = 0; i < NUM_OUTPUT_PICS; i++)
   {
     m_allOutPic[i].vdp_flip_target = VDP_INVALID_HANDLE;
     m_allOutPic[i].vdp_flip_queue = VDP_INVALID_HANDLE;
   }
 
+  // TODO: change setting to integer level setting all scaling options below it too 
   upScale = g_advancedSettings.m_videoVDPAUScaling;
 }
 
@@ -399,6 +408,44 @@ bool CVDPAU::IsBufferValid(int flipBufferIdx)
   return true;
 }
 
+int CVDPAU::PreBindAllPixmaps()
+{
+  if (recover)
+     return -1;
+
+  if (m_vdpauOutputMethod != OUTPUT_PIXMAP || m_preBindPixmapsDone)
+  {
+      return 0;
+  }
+
+  GLenum textureTarget = GL_TEXTURE_2D; // temporary hack...should really pass this as input, or determine correct value eg GL_TEXTURE_RECTANGLE_ARB
+  glEnable(textureTarget); 
+  OutputPicture *outPic;
+  for (int i = 0; i < NUM_OUTPUT_PICS; i++)
+  {
+      outPic = &m_allOutPic[i];
+      // set texture
+      if (!glIsTexture(outPic->texture[0]))
+         glGenTextures(1, outPic->texture);
+
+      //bind texture
+      glBindTexture(textureTarget, outPic->texture[0]);
+
+      // bind pixmap
+      GLXPixmap glPixmap = outPic->glPixmap;
+      bool bound = outPic->bound;
+      outPic->bound = true;
+      if (bound)
+         glXReleaseTexImageEXT(m_Display, glPixmap, GLX_FRONT_LEFT_EXT);
+      glXBindTexImageEXT(m_Display, glPixmap, GLX_FRONT_LEFT_EXT, NULL);
+
+      glBindTexture(textureTarget, 0);
+  }
+  glDisable(textureTarget); 
+  m_preBindPixmapsDone = true;
+  return 1;
+}
+
 int CVDPAU::SetTexture(int plane, int field, int flipBufferIdx)
 {
   m_glTexture = 0;
@@ -421,7 +468,10 @@ int CVDPAU::SetTexture(int plane, int field, int flipBufferIdx)
     if (m_flipBuffer[flipBufferIdx])
     {
       if (!glIsTexture(m_flipBuffer[flipBufferIdx]->texture[0]))
+{
+CLog::Log(LOGDEBUG,"ASB: CVDPAU SetTexture about to glGenTextures flipBufferIdx: %i m_flipBuffer[flipBufferIdx]: %u", flipBufferIdx, (unsigned int)m_flipBuffer[flipBufferIdx]);
         glGenTextures(1, m_flipBuffer[flipBufferIdx]->texture);
+}
       m_glTexture = m_flipBuffer[flipBufferIdx]->texture[0];
       return 0;
     }
@@ -449,11 +499,15 @@ void CVDPAU::BindPixmap(int flipBufferIdx)
   {
     GLXPixmap glPixmap = m_flipBuffer[flipBufferIdx]->glPixmap;
     bool bound = m_flipBuffer[flipBufferIdx]->bound;
+    
     m_flipBuffer[flipBufferIdx]->bound = true;
     lock.Leave();
+int64_t prev = CurrentHostCounter();
+CLog::Log(LOGDEBUG,"ASB: CVDPAU BindPixmap about to glXBindTexImageEXT flipBufferIdx: %i bound: %i", flipBufferIdx, (int)bound);
     if (bound)
       glXReleaseTexImageEXT(m_Display, glPixmap, GLX_FRONT_LEFT_EXT);
     glXBindTexImageEXT(m_Display, glPixmap, GLX_FRONT_LEFT_EXT, NULL);
+CLog::Log(LOGDEBUG,"ASB: CVDPAU BindPixmap glXBindTexImageEXT done flipBufferIdx: %i m_flipBuffer[flipBufferIdx]: %u bound: %i DUR: %i", flipBufferIdx, (unsigned int)m_flipBuffer[flipBufferIdx], (int)bound, (int)(int64_t)((CurrentHostCounter() - prev)/1000000));
   }
   else CLog::Log(LOGERROR,"(VDPAU) BindPixmap called without valid pixmap");
 }
@@ -544,7 +598,7 @@ void CVDPAU::CheckFeatures()
                                     &videoMixer);
       CheckStatus(vdp_st, __LINE__);
 
-      SetHWUpscaling();
+      //SetHWUpscaling();
     }
 
     if (tmpBrightness != g_settings.m_currentVideoSettings.m_Brightness ||
@@ -576,6 +630,7 @@ void CVDPAU::CheckFeatures()
         SetNoiseReduction();
         SetSharpness();
         SetDeinterlacing();
+        SetHWUpscaling();
       }
       else
         PostProcOff();
@@ -615,6 +670,73 @@ bool CVDPAU::Supports(EINTERLACEMETHOD method)
   return false;
 }
 
+bool CVDPAU::GenerateStudioCSCMatrix(VdpColorStandard colorStandard, VdpCSCMatrix &studioCSCMatrix)
+{
+   // instead use studioCSCKCoeffs601[3], studioCSCKCoeffs709[3] to generate float[3][4] matrix (float studioCSC[3][4])
+   // m00 = mRY = red: luma factor (contrast factor) (1.0)
+   // m10 = mGY = green: luma factor (contrast factor) (1.0)
+   // m20 = mBY = blue: luma factor (contrast factor) (1.0)
+   //
+   // m01 = mRB = red: blue color diff coeff (0.0)
+   // m11 = mGB = green: blue color diff coeff (-2Kb(1-Kb)/(Kg))
+   // m21 = mBB = blue: blue color diff coeff ((1-Kb)/0.5) 
+   //
+   // m02 = mRR = red: red color diff coeff ((1-Kr)/0.5)
+   // m12 = mGR = green: red color diff coeff (-2Kr(1-Kr)/(Kg))
+   // m22 = mBR = blue: red color diff coeff (0.0)
+   //
+   // m03 = mRC = red: colour zero offset (brightness factor) (-(1-Kr)/0.5 * (128/255))
+   // m13 = mGC = green: colour zero offset (brightness factor) ((256/255) * (Kb(1-Kb) + Kr(1-Kr)) / Kg)
+   // m23 = mBC = blue: colour zero offset (brightness factor) (-(1-Kb)/0.5 * (128/255))
+
+   // columns
+   int Y = 0;
+   int Cb = 1;
+   int Cr = 2;
+   int C = 3; 
+   // rows
+   int R = 0;
+   int G = 1;
+   int B = 2;
+   // colour standard coefficients for red, geen, blue
+   double Kr, Kg, Kb;
+   // colour diff zero position (use standard 8-bit coding precision)
+   double CDZ = 128; //256*0.5
+   // range excursion (use standard 8-bit coding precision)
+   double EXC = 255; //256-1
+   
+   if (colorStandard == VDP_COLOR_STANDARD_ITUR_BT_601)
+   {
+      Kr = studioCSCKCoeffs601[0];
+      Kg = studioCSCKCoeffs601[1];
+      Kb = studioCSCKCoeffs601[2];
+   }
+   else // assume VDP_COLOR_STANDARD_ITUR_BT_709
+   {
+      Kr = studioCSCKCoeffs709[0];
+      Kg = studioCSCKCoeffs709[1];
+      Kb = studioCSCKCoeffs709[2];
+   }
+   // we keep luma unscaled to retain the levels present in source so that 16-235 luma is converted to RGB 16-235
+   studioCSCMatrix[R][Y] = 1.0;
+   studioCSCMatrix[G][Y] = 1.0;
+   studioCSCMatrix[B][Y] = 1.0;
+   
+   studioCSCMatrix[R][Cb] = 0.0;
+   studioCSCMatrix[G][Cb] = (double)-2 * Kb * (1 - Kb) / Kg;
+   studioCSCMatrix[B][Cb] = (double)(1 - Kb) / 0.5;
+
+   studioCSCMatrix[R][Cr] = (double)(1 - Kr) / 0.5;
+   studioCSCMatrix[G][Cr] = (double)-2 * Kr * (1 - Kr) / Kg;
+   studioCSCMatrix[B][Cr] = 0.0;
+
+   studioCSCMatrix[R][C] = (double)-1 * studioCSCMatrix[R][Cr] * CDZ/EXC;
+   studioCSCMatrix[G][C] = (double)-1 * (studioCSCMatrix[G][Cb] + studioCSCMatrix[G][Cr]) * CDZ/EXC;
+   studioCSCMatrix[B][C] = (double)-1 * studioCSCMatrix[B][Cb] * CDZ/EXC;
+
+   return true; 
+}
+
 void CVDPAU::SetColor()
 {
   VdpStatus vdp_st;
@@ -624,19 +746,24 @@ void CVDPAU::SetColor()
   if (tmpContrast != g_settings.m_currentVideoSettings.m_Contrast)
     m_Procamp.contrast = (float)((g_settings.m_currentVideoSettings.m_Contrast)+50) / 100;
 
+  VdpColorStandard colorStandard;
   if(vid_height >= 600 || vid_width > 1024)
-    vdp_st = vdp_generate_csc_matrix(&m_Procamp, VDP_COLOR_STANDARD_ITUR_BT_709, &m_CSCMatrix);
+    colorStandard = VDP_COLOR_STANDARD_ITUR_BT_709;
+    //vdp_st = vdp_generate_csc_matrix(&m_Procamp, VDP_COLOR_STANDARD_ITUR_BT_709, &m_CSCMatrix);
   else
-    vdp_st = vdp_generate_csc_matrix(&m_Procamp, VDP_COLOR_STANDARD_ITUR_BT_601, &m_CSCMatrix);
+    colorStandard = VDP_COLOR_STANDARD_ITUR_BT_601;
+    //vdp_st = vdp_generate_csc_matrix(&m_Procamp, VDP_COLOR_STANDARD_ITUR_BT_601, &m_CSCMatrix);
 
   VdpVideoMixerAttribute attributes[] = { VDP_VIDEO_MIXER_ATTRIBUTE_CSC_MATRIX };
   if (g_guiSettings.GetBool("videoplayer.vdpaustudiolevel"))
   {
+    GenerateStudioCSCMatrix(colorStandard, studioCSC);
     void const * pm_CSCMatix[] = { &studioCSC };
     vdp_st = vdp_video_mixer_set_attribute_values(videoMixer, ARSIZE(attributes), attributes, pm_CSCMatix);
   }
   else
   {
+    vdp_st = vdp_generate_csc_matrix(&m_Procamp, colorStandard, &m_CSCMatrix);
     void const * pm_CSCMatix[] = { &m_CSCMatrix };
     vdp_st = vdp_video_mixer_set_attribute_values(videoMixer, ARSIZE(attributes), attributes, pm_CSCMatix);
   }
@@ -768,23 +895,27 @@ void CVDPAU::SetDeinterlacing()
 
   if (method == VS_INTERLACEMETHOD_AUTO)
   {
+    // temporal + spatial + ivtc detection enabled
     VdpBool enabled[]={1,1,1}; // Same features as VS_INTERLACEMETHOD_VDPAU_TEMPORAL
     vdp_st = vdp_video_mixer_set_feature_enables(videoMixer, ARSIZE(feature), feature, enabled);
   }
   else if (method == VS_INTERLACEMETHOD_VDPAU_TEMPORAL
        ||  method == VS_INTERLACEMETHOD_VDPAU_TEMPORAL_HALF)
   {
+    // only temporal enabled
     VdpBool enabled[]={1,0,0};
     vdp_st = vdp_video_mixer_set_feature_enables(videoMixer, ARSIZE(feature), feature, enabled);
   }
   else if (method == VS_INTERLACEMETHOD_VDPAU_TEMPORAL_SPATIAL
        ||  method == VS_INTERLACEMETHOD_VDPAU_TEMPORAL_SPATIAL_HALF)
   {
+    // temporal + temporal/spatial enabled
     VdpBool enabled[]={1,1,0};
     vdp_st = vdp_video_mixer_set_feature_enables(videoMixer, ARSIZE(feature), feature, enabled);
   }
   else if (method == VS_INTERLACEMETHOD_VDPAU_INVERSE_TELECINE)
   {
+    // temporal + ivtc detection enabled
     VdpBool enabled[]={1,0,1};
     vdp_st = vdp_video_mixer_set_feature_enables(videoMixer, ARSIZE(feature), feature, enabled);
   }
@@ -826,6 +957,78 @@ void CVDPAU::PostProcOff()
   {
     VdpVideoMixerFeature feature[] = { VDP_VIDEO_MIXER_FEATURE_SHARPNESS};
 
+    VdpBool enabled[]={0};
+    vdp_st = vdp_video_mixer_set_feature_enables(videoMixer, ARSIZE(feature), feature, enabled);
+    CheckStatus(vdp_st, __LINE__);
+  }
+
+  if(Supports(VDP_VIDEO_MIXER_FEATURE_HIGH_QUALITY_SCALING_L1))
+  {
+    VdpVideoMixerFeature feature[] = { VDP_VIDEO_MIXER_FEATURE_HIGH_QUALITY_SCALING_L1 };
+    VdpBool enabled[]={0};
+    vdp_st = vdp_video_mixer_set_feature_enables(videoMixer, ARSIZE(feature), feature, enabled);
+    CheckStatus(vdp_st, __LINE__);
+  }
+
+  if(Supports(VDP_VIDEO_MIXER_FEATURE_HIGH_QUALITY_SCALING_L2))
+  {
+    VdpVideoMixerFeature feature[] = { VDP_VIDEO_MIXER_FEATURE_HIGH_QUALITY_SCALING_L2 };
+    VdpBool enabled[]={0};
+    vdp_st = vdp_video_mixer_set_feature_enables(videoMixer, ARSIZE(feature), feature, enabled);
+    CheckStatus(vdp_st, __LINE__);
+  }
+
+  if(Supports(VDP_VIDEO_MIXER_FEATURE_HIGH_QUALITY_SCALING_L3))
+  {
+    VdpVideoMixerFeature feature[] = { VDP_VIDEO_MIXER_FEATURE_HIGH_QUALITY_SCALING_L3 };
+    VdpBool enabled[]={0};
+    vdp_st = vdp_video_mixer_set_feature_enables(videoMixer, ARSIZE(feature), feature, enabled);
+    CheckStatus(vdp_st, __LINE__);
+  }
+
+  if(Supports(VDP_VIDEO_MIXER_FEATURE_HIGH_QUALITY_SCALING_L4))
+  {
+    VdpVideoMixerFeature feature[] = { VDP_VIDEO_MIXER_FEATURE_HIGH_QUALITY_SCALING_L4 };
+    VdpBool enabled[]={0};
+    vdp_st = vdp_video_mixer_set_feature_enables(videoMixer, ARSIZE(feature), feature, enabled);
+    CheckStatus(vdp_st, __LINE__);
+  }
+
+  if(Supports(VDP_VIDEO_MIXER_FEATURE_HIGH_QUALITY_SCALING_L5))
+  {
+    VdpVideoMixerFeature feature[] = { VDP_VIDEO_MIXER_FEATURE_HIGH_QUALITY_SCALING_L5 };
+    VdpBool enabled[]={0};
+    vdp_st = vdp_video_mixer_set_feature_enables(videoMixer, ARSIZE(feature), feature, enabled);
+    CheckStatus(vdp_st, __LINE__);
+  }
+
+  if(Supports(VDP_VIDEO_MIXER_FEATURE_HIGH_QUALITY_SCALING_L6))
+  {
+    VdpVideoMixerFeature feature[] = { VDP_VIDEO_MIXER_FEATURE_HIGH_QUALITY_SCALING_L6 };
+    VdpBool enabled[]={0};
+    vdp_st = vdp_video_mixer_set_feature_enables(videoMixer, ARSIZE(feature), feature, enabled);
+    CheckStatus(vdp_st, __LINE__);
+  }
+
+  if(Supports(VDP_VIDEO_MIXER_FEATURE_HIGH_QUALITY_SCALING_L7))
+  {
+    VdpVideoMixerFeature feature[] = { VDP_VIDEO_MIXER_FEATURE_HIGH_QUALITY_SCALING_L7 };
+    VdpBool enabled[]={0};
+    vdp_st = vdp_video_mixer_set_feature_enables(videoMixer, ARSIZE(feature), feature, enabled);
+    CheckStatus(vdp_st, __LINE__);
+  }
+
+  if(Supports(VDP_VIDEO_MIXER_FEATURE_HIGH_QUALITY_SCALING_L8))
+  {
+    VdpVideoMixerFeature feature[] = { VDP_VIDEO_MIXER_FEATURE_HIGH_QUALITY_SCALING_L8 };
+    VdpBool enabled[]={0};
+    vdp_st = vdp_video_mixer_set_feature_enables(videoMixer, ARSIZE(feature), feature, enabled);
+    CheckStatus(vdp_st, __LINE__);
+  }
+
+  if(Supports(VDP_VIDEO_MIXER_FEATURE_HIGH_QUALITY_SCALING_L9))
+  {
+    VdpVideoMixerFeature feature[] = { VDP_VIDEO_MIXER_FEATURE_HIGH_QUALITY_SCALING_L9 };
     VdpBool enabled[]={0};
     vdp_st = vdp_video_mixer_set_feature_enables(videoMixer, ARSIZE(feature), feature, enabled);
     CheckStatus(vdp_st, __LINE__);
@@ -968,6 +1171,8 @@ void CVDPAU::FiniVDPAUOutput()
   decoder = VDP_INVALID_HANDLE;
 
   CSingleLock lock(m_videoSurfaceSec);
+  CLog::Log(LOGDEBUG, "CVDPAU::FiniVDPAUOutput destroying %i video surfaces", m_videoSurfaces.size());
+  
   for(unsigned int i = 0; i < m_videoSurfaces.size(); i++)
   {
     vdp_st = vdp_video_surface_destroy(m_videoSurfaces[i]->surface);
@@ -1026,7 +1231,6 @@ bool CVDPAU::ConfigVDPAU(AVCodecContext* avctx, int ref_frames)
   vid_width = avctx->width;
   vid_height = avctx->height;
 
-  past[1] = past[0] = current = future[0] = future[1] = NULL;
   CLog::Log(LOGNOTICE, " (VDPAU) screenWidth:%i vidWidth:%i",OutWidth,vid_width);
   CLog::Log(LOGNOTICE, " (VDPAU) screenHeight:%i vidHeight:%i",OutHeight,vid_height);
   ReadFormatOf(avctx->pix_fmt, vdp_decoder_profile, vdp_chroma_type);
@@ -1073,6 +1277,12 @@ bool CVDPAU::ConfigOutputMethod(AVCodecContext *avctx, AVFrame *pFrame)
   // check if one of the vdpau interlacing methods are chosen
   m_bVdpauDeinterlacing = false;
   EINTERLACEMETHOD method = GetDeinterlacingMethod();
+  // VS_INTERLACEMETHOD_FORCE_VDPAU_NONE tells us force mixer use when interop_yuv is available, without enabling vdpau de-interlacing
+  // VS_INTERLACEMETHOD_VDPAU_BOB is the basic vdpau mixer de-interlacer
+  // the HALF modes are only consider half the fields in the mixer
+  // the AUTO mode enables de-interlacing if stream appears to be interlaced and enables temporal + temporal/spatial + ivtc-detection
+  // TODO: AUTO mode should also offer ability to control max level (BOB,TEMPORAL,SPATIAL,TEMPORTAL/SPATIAL etc too) and to switch off IVTC detection for auto
+  // TODO: VS_INTERLACEMETHOD_VDPAU_INVERSE_TELECINE has a bad name so at least change in GUI string to show that it is temporal + ivtc detection
   if((method == VS_INTERLACEMETHOD_AUTO && m_binterlacedFrame)
      ||  method == VS_INTERLACEMETHOD_VDPAU_BOB
      ||  method == VS_INTERLACEMETHOD_VDPAU_TEMPORAL
@@ -1093,7 +1303,8 @@ bool CVDPAU::ConfigOutputMethod(AVCodecContext *avctx, AVFrame *pFrame)
     FiniOutputMethod();
     CLog::Log(LOGNOTICE, " (VDPAU) Configure YUV output");
 
-    for (int i = 0; i < NUM_OUTPUT_SURFACES; i++)
+    m_outPicsNum = std::min(NUM_OUTPUT_SURFACES, NUM_OUTPUT_PICS);
+    for (int i = 0; i < m_outPicsNum; i++)
     {
       m_allOutPic[i].render = NULL;
       m_freeOutPic.push_back(&m_allOutPic[i]);
@@ -1121,8 +1332,11 @@ bool CVDPAU::ConfigOutputMethod(AVCodecContext *avctx, AVFrame *pFrame)
     if (!g_guiSettings.GetBool("videoplayer.usevdpauinteroprgb"))
       tmpMaxOutputSurfaces = std::min(std::max(g_advancedSettings.m_videoVDPAUnumOutSurfacesPixmap, 1), NUM_OUTPUT_SURFACES);
 
+//ASB testing
+//    tmpMaxOutputSurfaces = 5;
+//TODO: remove line above
     // Creation of outputSurfaces
-    for (int i = 0; i < NUM_OUTPUT_SURFACES && i < tmpMaxOutputSurfaces; i++)
+    for (int i = 0; i < tmpMaxOutputSurfaces; i++)
     {
       vdp_st = vdp_output_surface_create(vdp_device,
                                        VDP_RGBA_FORMAT_B8G8R8A8,
@@ -1138,7 +1352,12 @@ bool CVDPAU::ConfigOutputMethod(AVCodecContext *avctx, AVFrame *pFrame)
                        tmpMaxOutputSurfaces,
                        NUM_OUTPUT_SURFACES);
 
-    for (int i = 0; i < NUM_OUTPUT_SURFACES; i++)
+    if (g_guiSettings.GetBool("videoplayer.usevdpauinteroprgb"))
+       m_outPicsNum = std::min(NUM_OUTPUT_SURFACES, NUM_OUTPUT_PICS);
+    else
+       m_outPicsNum = NUM_OUTPUT_PICS;
+        
+    for (int i = 0; i < m_outPicsNum; i++)
     {
       if (g_guiSettings.GetBool("videoplayer.usevdpauinteroprgb"))
         m_allOutPic[i].outputSurface = outputSurfaces[i];
@@ -1153,7 +1372,7 @@ bool CVDPAU::ConfigOutputMethod(AVCodecContext *avctx, AVFrame *pFrame)
       m_vdpauOutputMethod = OUTPUT_GL_INTEROP_RGB;
     else
     {
-      for (int i = 0; i < NUM_OUTPUT_SURFACES; i++)
+      for (int i = 0; i < m_outPicsNum; i++)
       {
         MakePixmap(i, OutWidth, OutHeight);
         vdp_st = vdp_presentation_queue_target_create_x11(vdp_device,
@@ -1171,7 +1390,7 @@ bool CVDPAU::ConfigOutputMethod(AVCodecContext *avctx, AVFrame *pFrame)
       }
       m_vdpauOutputMethod = OUTPUT_PIXMAP;
     }
-  } // RBG
+  } // RGB
 
   return true;
 }
@@ -1219,7 +1438,7 @@ bool CVDPAU::FiniOutputMethod()
   }
 
   // destroy pixmap stuff
-  for (int i = 0; i < NUM_OUTPUT_SURFACES; i++)
+  for (int i = 0; i < m_outPicsNum; i++)
   {
     if (m_allOutPic[i].vdp_flip_queue != VDP_INVALID_HANDLE)
     {
@@ -1245,6 +1464,7 @@ bool CVDPAU::FiniOutputMethod()
       XFreePixmap(m_Display, m_allOutPic[i].pixmap);
       m_allOutPic[i].pixmap = 0;
     }
+    m_preBindPixmapsDone = false;
   }
 
   { CSingleLock lock(m_mixerSec);
@@ -1259,7 +1479,9 @@ bool CVDPAU::FiniOutputMethod()
     while (!m_usedOutPic.empty())
       m_usedOutPic.pop_front();
   }
-  m_presentPicture = m_flipBuffer[0] = m_flipBuffer[1] = m_flipBuffer[2] = NULL;
+  m_presentPicture = NULL;
+  for (int i = 0; i < NUM_RENDERBUF_PICS; i++)
+      m_flipBuffer[i] = NULL;
 
   // force cleanup of opengl interop
   glInteropFinish = true;
@@ -1465,6 +1687,46 @@ void CVDPAU::FFDrawSlice(struct AVCodecContext *s,
   vdp->CheckStatus(vdp_st, __LINE__);
 }
 
+int CVDPAU::Check(AVCodecContext* avctx)
+{
+  if(CheckRecover(false))
+    return VC_FLUSHED;
+  // if we are configured and outputting then check queue is full
+  if (vdpauConfigured && m_vdpauOutputMethod != OUTPUT_NONE && QueueIsFull())
+    return VC_FULL;
+  else
+    return 0;
+}
+
+bool CVDPAU::QueueIsFull()
+{
+  if (m_vdpauOutputMethod == OUTPUT_GL_INTEROP_YUV) 
+  {
+     CSingleLock locku(m_outPicSec);
+     if (m_freeOutPic.empty())
+        return true; // buffers are full
+  }
+  else
+  {
+     CSingleLock lockm(m_outPicSec);
+     int msgs = m_mixerMessages.size();
+     lockm.Leave();
+     CSingleLock locku(m_outPicSec);
+     int notFreePics = m_outPicsNum - m_freeOutPic.size();
+     locku.Leave();
+
+     // assume for simplicity 2 output pics can come from one frame message if de-interlacing via mixer 
+     // and that mixer-input can have 2 outstanding msgs inside it
+     int msgsFactor = m_bVdpauDeinterlacing ? 2 : 1;
+
+     int estimatedPicQLength = notFreePics + (msgsFactor * (msgs + 2));
+//CLog::Log(LOGDEBUG,"ASB: CVDPAU::QueueIsFull estimatedPicQLength: %i, notFreePics: %i", estimatedPicQLength, notFreePics);
+     if (estimatedPicQLength >= MAX_PIC_Q_LENGTH)
+        return true; // buffers are full
+  }
+  return false;
+}
+
 int CVDPAU::Decode(AVCodecContext *avctx, AVFrame *pFrame, bool bDrain)
 {
   //CLog::Log(LOGNOTICE,"%s",__FUNCTION__);
@@ -1493,6 +1755,28 @@ int CVDPAU::Decode(AVCodecContext *avctx, AVFrame *pFrame, bool bDrain)
     outRectVid.y1 = OutHeight;
   }
 
+  if (m_dropState && m_vdpauOutputMethod != OUTPUT_GL_INTEROP_YUV)
+  {
+    CSingleLock lock(m_mixerSec);
+    m_mixerCmd |= MIXER_CMD_HURRY;
+    m_dropCount++;
+  }
+  else
+    m_dropCount = 0;
+
+  // target usedPics level where we stop holding off from returning VC_PICTURE (to encourage buffering)
+  int targetUsed = 0;
+  if (m_vdpauOutputMethod == OUTPUT_PIXMAP) // target around 5 if sensible
+     targetUsed = std::min(std::min(m_outPicsNum - NUM_RENDERBUF_PICS - 1, totalAvailableOutputSurfaces), 5);
+  else if (m_vdpauOutputMethod == OUTPUT_GL_INTEROP_RGB) // target around 3 if sensible
+     targetUsed = std::min(m_outPicsNum - NUM_RENDERBUF_PICS - 1, 3);
+  else //OUTPUT_GL_INTEROP_YUV, target around 4 if sensible
+     targetUsed = std::min(m_outPicsNum - NUM_RENDERBUF_PICS - 1, 4);
+  targetUsed = std::max(targetUsed, 0);
+
+  OutputPicture *usedPicFront;
+  int usedPics;
+
   if(pFrame)
   { // we have a new frame from decoder
 
@@ -1512,23 +1796,9 @@ int CVDPAU::Decode(AVCodecContext *avctx, AVFrame *pFrame, bool bDrain)
     if (m_vdpauOutputMethod == OUTPUT_GL_INTEROP_YUV)
     {
       CSingleLock lock(m_outPicSec);
-
-//      // just in case, should not happen
-//      while (m_usedOutPic.size() > 0)
-//      {
-//        OutputPicture *pic = m_usedOutPic.front();
-//        if (pic->render)
-//          pic->render->state &= ~FF_VDPAU_STATE_USED_FOR_RENDER;
-//        pic->render = NULL;
-//        m_usedOutPic.pop_front();
-//        m_freeOutPic.push_back(pic);
-//        CLog::Log(LOGWARNING, "CVDPAU::Decode: yuv still pictures in queue");
-//      }
-
       if (m_freeOutPic.empty())
       {
-        CLog::Log(LOGERROR,"CVDPAU::Decode: yuv - nor free pic");
-        return VC_ERROR;
+        return VC_FULL | VC_ERROR;
       }
       OutputPicture *outPic = m_freeOutPic.front();
       m_freeOutPic.pop_front();
@@ -1536,168 +1806,194 @@ int CVDPAU::Decode(AVCodecContext *avctx, AVFrame *pFrame, bool bDrain)
       ((CDVDVideoCodecFFmpeg*)avctx->opaque)->GetPictureCommon(&outPic->DVDPic);
       outPic->render = render;
       m_usedOutPic.push_back(outPic);
-      int usedPics = m_usedOutPic.size();
       lock.Leave();
-      int retval = VC_PICTURE;
-      if (usedPics < 3)
-        retval |= VC_BUFFER;
-      return retval;
     }
+    else //add a mixer msg
+    {
+       MixerMessage msg;
+       msg.render = render;
+       memset(&msg.DVDPic, 0, sizeof(DVDVideoPicture));
+       ((CDVDVideoCodecFFmpeg*)avctx->opaque)->GetPictureCommon(&msg.DVDPic);
+       msg.outRectVid = outRectVid;
 
-    MixerMessage msg;
-    msg.render = render;
-    memset(&msg.DVDPic, 0, sizeof(DVDVideoPicture));
-    ((CDVDVideoCodecFFmpeg*)avctx->opaque)->GetPictureCommon(&msg.DVDPic);
-    msg.outRectVid = outRectVid;
+       //TODO: this post proc logic does not seem quite correct with CheckFeatures doing too much above...?
+       //check if we should switch off post processing...shouldn't it be the flag in msg for mixer thread to set post proc on/off directly itself?
+       if (msg.DVDPic.iFlags & DVP_FLAG_NOPOSTPROC)
+         m_bPostProc = false;
+       else
+         m_bPostProc = true;
 
-    //check if we should switch off post processing
-    if (msg.DVDPic.iFlags & DVP_FLAG_NOPOSTPROC)
-      m_bPostProc = false;
-    else
-      m_bPostProc = true;
-
-    { CSingleLock lock(m_mixerSec);
-      m_mixerMessages.push(msg);
+       { CSingleLock lock(m_mixerSec);
+         m_mixerMessages.push(msg);
+       }
+       m_msgSignal.Set();
     }
-    m_msgSignal.Set();
   }
+  // frame adding code completed!
 
-  if (m_vdpauOutputMethod == OUTPUT_GL_INTEROP_YUV)
-  {
-    return VC_BUFFER;
-  }
-
-  if (m_dropState)
-  {
-    CSingleLock lock(m_mixerSec);
-    m_mixerCmd |= MIXER_CMD_HURRY;
-    m_dropCount++;
-  }
-  else
-    m_dropCount = 0;
-
-  // wait for mixer to get pic
-  int usedPics, msgs;
+  // now we decide whether to return with a picture ready reported or not, and whether to report wanting more data
   int iter = 0;
-  // hard cap usedPics queue to 1 for interop rgb, 4 for pixmap (evaluated after processing any presentable pic)
-  int cappedQueueSize = (m_vdpauOutputMethod == OUTPUT_PIXMAP) ? 4 : 1;
-  retval = 0;
-  while (1)
+
+  if (m_vdpauOutputMethod == OUTPUT_GL_INTEROP_YUV) 
   {
-    // get msgs count first so that we are more likely to double count rather than undercount
-    { CSingleLock lock(m_mixerSec);
-      msgs = m_mixerMessages.size();
-    }
+     int retval = 0;
+     while (++iter < 2000)
+     {
+        CSingleLock lock(m_outPicSec);
+        usedPics = m_usedOutPic.size();
+        if (usedPics > 0)
+           usedPicFront = m_usedOutPic.front();
+        lock.Leave();
+
+        if (usedPics > 0 && usedPicFront != m_lastReportedReadyPic) //we have not reported about this usedPic yet
+        {
+           if (bDrain || usedPics >= targetUsed)
+           {
+              m_lastReportedReadyPic = usedPicFront;
+              retval = VC_PICTURE;
+              break;
+           }
+        }
+        if (usedPics > 0 && bDrain && iter < 200) //loop again to check to see if GetPicture has been called if asked to drain
+        {
+           usleep(100);
+           continue;
+        }
+        break;
+     }
+
+     if (!QueueIsFull())
+        retval |= VC_BUFFER;
+     return retval;
+  }
+  // else MIXER based modes from here on
+
+  int msgs;
+  retval = 0;
+  int msgsFactor = m_bVdpauDeinterlacing ? 2 : 1; //how many usedPics can come out of 1 mixer input msg
+  bool dropped = false;
+  bool prevNotEmpty = true;
+  while (++iter < 2000)
+  {
     { CSingleLock lock(m_outPicSec);
       usedPics = m_usedOutPic.size();
     }
 
     // check if we have a picture to return
-    if (m_vdpauOutputMethod != OUTPUT_PIXMAP)
+    if (usedPics > 0)
     {
-      if (usedPics > 0)
-      {
-        CSingleLock lock(m_outPicSec);
-        if (m_usedOutPic.front()->DVDPic.iFlags & DVP_FLAG_DROPPED)
-        {
+       CSingleLock lock(m_outPicSec);
+       usedPicFront = m_usedOutPic.front();
+       if ( (m_usedOutPic.front()->DVDPic.iFlags & DVP_FLAG_DROPPED) ||
+            (m_vdpauOutputMethod == OUTPUT_PIXMAP && m_usedOutPic.front()->outputSurface == VDP_INVALID_HANDLE) )
+       {
+          if (dropped)
+             break; //drop this next time around else caller can't report on drops accurately
           m_freeOutPic.push_back(m_usedOutPic.front());
           m_usedOutPic.pop_front();
-          retval =  VC_DROPPED | VC_PRESENTDROP | VC_BUFFER;
-          // if we still have a pic, signal it to player
-          if (m_usedOutPic.size() > 0 && !(m_usedOutPic.front()->DVDPic.iFlags & DVP_FLAG_DROPPED))
-            retval |= VC_PICTURE;
-          return retval;
-        }
-        // if not asked to drain then request more data if we don't have enough in the queue for at least one 
-        // subsequent picture
-        if ((!bDrain) && (usedPics < 2 && msgs < 3))
-           return VC_BUFFER;
+          lock.Leave();
+CLog::Log(LOGDEBUG,"ASB: CVDPAU::Decode dropping usedPic at presentation stage");
+          retval =  VC_DROPPED | VC_PRESENTDROP;
+          dropped = true;
+          continue;
+       }
+       lock.Leave();
 
-        retval |= VC_PICTURE;
-        break;
-      }
-    }
-    else
-    {
-      CSingleLock lock(m_outPicSec);
-      if (usedPics > 0 && (m_usedOutPic.front()->outputSurface == VDP_INVALID_HANDLE))
-      {
-        m_freeOutPic.push_back(m_usedOutPic.front());
-        m_usedOutPic.pop_front();
-        usedPics = m_usedOutPic.size();
-        retval |= VC_DROPPED | VC_PRESENTDROP;
-        break;
-      }
-      else
-      {
-        // if not asked to drain then request more data if we don't have enough in the queue for at least one 
-        // subsequent picture (constrained by output surfaces)
-        // also do this for pixmaps if it seems our only pic is the frame just passed to us (as this will likely take 
-        // too long to become visible)
-        if (((!bDrain) && (usedPics < 2 && msgs < 3) && (usedPics + msgs < totalAvailableOutputSurfaces)) ||
-            (m_vdpauOutputMethod == OUTPUT_PIXMAP && usedPics + msgs == 1 && pFrame))
-           return VC_BUFFER;
-      }
-      
-      if (usedPics > 0)
-      {
-        VdpPresentationQueueStatus status;
-        VdpTime time;
-        VdpStatus vdp_st;
-        VdpOutputSurface surface = m_usedOutPic.front()->outputSurface;
+       // if not asked to drain and not enough data queued then request more data - don't tell caller there is a picture
+       // in order to promote pre-buffering. 
+       if ((!bDrain) && usedPics < targetUsed && (!QueueIsFull()))
+          return VC_BUFFER;
 
-        vdp_st = vdp_presentation_queue_query_surface_status(
+       if (m_lastReportedReadyPic != usedPicFront) //we have not reported about this usedPic yet
+       {
+          if (m_vdpauOutputMethod == OUTPUT_PIXMAP)
+          {
+             VdpPresentationQueueStatus status;
+             VdpTime time;
+             VdpStatus vdp_st;
+             VdpOutputSurface surface = m_usedOutPic.front()->outputSurface;
+
+             vdp_st = vdp_presentation_queue_query_surface_status(
                       m_usedOutPic.front()->vdp_flip_queue,
                       surface, &status, &time);
-        CheckStatus(vdp_st, __LINE__);
-        if(status == VDP_PRESENTATION_QUEUE_STATUS_VISIBLE && vdp_st == VDP_STATUS_OK)
-        {
-          retval |= VC_PICTURE;
-          break;
-        }
-      }
-    }// PIXMAP
+             CheckStatus(vdp_st, __LINE__);
+             if (status == VDP_PRESENTATION_QUEUE_STATUS_VISIBLE && vdp_st == VDP_STATUS_OK)
+             {
+                // this output surface should now be fully copied to the pixmap presentation
+                // but currently we don't allow re-use for other outPics until GetPicture removes this one from usedPic Q
+             
+                m_lastReportedReadyPic = usedPicFront;
+                retval |= VC_PICTURE;
+                break;
+             }
+          }
+          else
+          {
+             m_lastReportedReadyPic = usedPicFront;
+             retval |= VC_PICTURE;
+             break;
+          }
+       }
+    }
+
+    // if we are here we have adequate usedPics buffers filled but no picture to give or we have no usedPics at all
+    // - we need to catch mixer problems resulting in not delivering any usedPics
+    // - and we need to sleep and loop back round to check again 
+    //   when draining loop for a relatively long time so that we aim to give a pic at the expense of blocking,
+    //   when not draining loop for a relatively short while to avoid our input flow stalling
 
     // wait if we have enough msgs but don't have an output from mixer
     // if everything is running smooth, we won't wait here
-    if (usedPics == 0 && msgs > cappedQueueSize + 2 && m_picSignal.WaitMSec(200))
+
+    { CSingleLock lock(m_mixerSec);
+      msgs = m_mixerMessages.size();
+    }
+    if (usedPics == 0 && msgs * msgsFactor >= MAX_PIC_Q_LENGTH - 1 && m_picSignal.WaitMSec(200))
     {
+      // we got a signal to check msgs & usedPics again
       continue;
     }
-    if (!(usedPics == 0 && msgs > cappedQueueSize))
+    if (!(usedPics == 0 && msgs * msgsFactor >= MAX_PIC_Q_LENGTH - 1)) //only don't enter here if previous wait timed out
     {
-      // return in order to fill our buffers 
-      if ((!bDrain) && ((usedPics < std::min(std::max(totalAvailableOutputSurfaces - 1, 1), cappedQueueSize) ||
-          usedPics + msgs < std::min(std::max(totalAvailableOutputSurfaces - 1, 1), cappedQueueSize) + 2)))
-        break;
-
-      // wait to get visible picture
-      //if (usedPics > 0)
-      //{
-        usleep(50);
-        if (++iter < 10000)
+      if (bDrain)
+      {
+         if (usedPics == 0 && msgs == 0 && prevNotEmpty && iter > 100) 
+         {
+            CSingleLock lock(m_mixerSec);
+            m_mixerCmd |= MIXER_CMD_DRAIN;
+            lock.Leave();
+            m_msgSignal.Set();
+            iter = 0; //reset
+            prevNotEmpty = false;
+         }
+         if (iter < 1000)
+         {
+            if (!(usedPics == 0 && msgs == 0))
+               prevNotEmpty = true;
+            usleep(100);
+            continue;
+         }
+      }
+      else if (iter < 100)
+      {
+          // loop back around to check for a picture after a short sleep but break out after a
+          // while to protect against starving input to the decoder
+          usleep(100);
           continue;
-      //}
+      }
+      break;
     }
+
     // we still appear to have no usedPics and a lots msgs and the picSignal wait timed out 
     // so we assume mixer thread is having difficulties
-
-    // buffers are full and we got no visible picture
-    { CSingleLock lock(m_mixerSec);
-       msgs = m_mixerMessages.size();
-    }
-    { CSingleLock lock(m_outPicSec);
-       usedPics = m_usedOutPic.size();
-    }
     CLog::Log(LOGERROR, "CVDPAU::Decode: timed out waiting for picture, messages: %d, pics %d",
                  msgs, usedPics);
     retval |= VC_ERROR;
     break;
   }// while
 
-  if (usedPics + msgs < std::min(std::max(totalAvailableOutputSurfaces - 1, 1), cappedQueueSize) + 2)
-    retval |= VC_BUFFER;
-
+  if (!QueueIsFull())
+     retval |= VC_BUFFER;
   return retval;
 }
 
@@ -1725,6 +2021,7 @@ bool CVDPAU::GetPicture(AVCodecContext* avctx, AVFrame* frame, DVDVideoPicture* 
     if (m_usedOutPic.size() > 0)
     {
       m_presentPicture = m_usedOutPic.front();
+CLog::Log(LOGDEBUG,"ASB: CVDPAU GetPicture set m_presentPicture: %u", (unsigned int)m_presentPicture);
       m_usedOutPic.pop_front();
     }
     else
@@ -1736,6 +2033,7 @@ bool CVDPAU::GetPicture(AVCodecContext* avctx, AVFrame* frame, DVDVideoPicture* 
 
   *picture = m_presentPicture->DVDPic;
 
+//TODO: move m_bPostProc checking out of here - should be done per pic at decode time
   if (m_presentPicture->render)
   {
     picture->format = DVDVideoPicture::FMT_VDPAU_420;
@@ -1875,6 +2173,7 @@ void CVDPAU::Present(int flipBufferIdx)
   }
 
   m_flipBuffer[flipBufferIdx] = m_presentPicture;
+CLog::Log(LOGDEBUG,"ASB: CVDPAU Present set flipbuffer flipBufferIdx: %i m_flipBuffer[flipBufferIdx]: %u", flipBufferIdx, (unsigned int)m_flipBuffer[flipBufferIdx]);
   m_presentPicture = NULL;
 
 }
@@ -1975,10 +2274,24 @@ void CVDPAU::Process()
     // wait for next picture
     if (!gotMsg)
     {
-      if (!m_msgSignal.WaitMSec(20))
-        ; //CLog::Log(LOGNOTICE, "CVDPAU::Process ------------- wait");
-      m_picSignal.Set();
-      continue;
+       if (!m_msgSignal.WaitMSec(20))
+          ; //CLog::Log(LOGNOTICE, "CVDPAU::Process ------------- wait");
+       // check for mixer command update
+       mixerLock.Enter();
+       cmd |= m_mixerCmd;
+       mixerLock.Leave();
+       // allow to drain by one if full input, by inserting a null msg
+       if (cmd & MIXER_CMD_DRAIN && m_mixerInput.size() > 2 )
+       {
+CLog::Log(LOGDEBUG,"ASB: CVDPAU::Process mixer drain requested");
+          msg.render = NULL;
+          m_mixerInput.push_front(msg);
+       }
+       else
+       {
+         //m_picSignal.Set(); //why might we need this?
+         continue;
+       }
     }
 
     // need at least 2 frames in the queue
@@ -2013,6 +2326,7 @@ void CVDPAU::Process()
     }
     else
     {
+      // either progressive or weave de-interlacing (as presented by the decode)
       mixersteps = 1;
       mixerfield = VDP_VIDEO_MIXER_PICTURE_STRUCTURE_FRAME;
     }
@@ -2039,13 +2353,21 @@ void CVDPAU::Process()
       sourceRect.x1 = vid_width;
       sourceRect.y1 = vid_height;
 
+      // handle our null future msg (no surface) created by drain request
+      VdpVideoSurface mixerInput0;
+      if (m_mixerInput[0].render == NULL)
+         mixerInput0 = VDP_INVALID_HANDLE;
+      else
+         mixerInput0 = m_mixerInput[0].render->surface;
+
       if(mixerfield == VDP_VIDEO_MIXER_PICTURE_STRUCTURE_FRAME)
       {
+        // use only 2 past 1 future for progressive/weave (only used for postproc anyway eg noise reduction)
         if (m_mixerInput.size() > 3)
           past_surfaces[1] = m_mixerInput[3].render->surface;
         if (m_mixerInput.size() > 2)
           past_surfaces[0] = m_mixerInput[2].render->surface;
-        futu_surfaces[0] = m_mixerInput[0].render->surface;
+        futu_surfaces[0] = mixerInput0;
         pastCount = 2;
         futuCount = 1;
       }
@@ -2064,7 +2386,7 @@ void CVDPAU::Process()
             past_surfaces[0] = m_mixerInput[2].render->surface;
           }
           futu_surfaces[0] = m_mixerInput[1].render->surface;
-          futu_surfaces[1] = m_mixerInput[0].render->surface;
+          futu_surfaces[1] = mixerInput0;
         }
         else
         { // second field
@@ -2078,13 +2400,16 @@ void CVDPAU::Process()
             past_surfaces[1] = m_mixerInput[2].render->surface;
           }
           past_surfaces[0] = m_mixerInput[1].render->surface;
-          futu_surfaces[0] = m_mixerInput[0].render->surface;
-          futu_surfaces[1] = m_mixerInput[0].render->surface;
+          futu_surfaces[0] = mixerInput0;
+          futu_surfaces[1] = mixerInput0;
         }
-        sourceRect.x0 += 4;
-        sourceRect.y0 += 2;
-        sourceRect.x1 -= 4;
-        sourceRect.y1 -= 2;
+        //TODO: this clipping for interlaced should be optional - and it also forces scaling on output overhead I guess
+        // and perhaps it is better to clip output outRectVid rather than always scale?
+        //TODO: offer option to make SD the correct aspect ratio when upscaling by setting the active SD width to 704 (rather than 720)
+        //sourceRect.x0 += 4;
+        //sourceRect.y0 += 2;
+        //sourceRect.x1 -= 4;
+        //sourceRect.y1 -= 2;
       }
 
       // get free pic from queue
@@ -2126,6 +2451,7 @@ void CVDPAU::Process()
         {
           double pts = m_mixerInput[1].DVDPic.pts +
               (m_mixerInput[0].DVDPic.pts - m_mixerInput[1].DVDPic.pts)/2;
+          //TODO: what is the comment here supposed to mean?
           outPic->DVDPic.dts = pts; //DVD_NOPTS_VALUE;
           outPic->DVDPic.pts = pts; //DVD_NOPTS_VALUE;
         }
@@ -2191,6 +2517,14 @@ void CVDPAU::Process()
         break;
 
     }// for (mixer stage)
+    // if we added a null msg for drain purpoes then we we should throw out all mixer input except current (index=1)
+    if (m_mixerInput[0].render == NULL)
+    {
+       m_mixerInput.pop_front();
+       while (m_mixerInput.size() > 1)
+          m_mixerInput.pop_back();
+       m_picSignal.Set();
+    }
     while (m_mixerInput.size() > 3)
     {
       videoSurfaceLock.Enter();
@@ -2218,7 +2552,7 @@ void CVDPAU::GLFinish()
 #ifdef GL_NV_vdpau_interop
   GLFiniInterop();
 #endif
-  for (int i=0; i < NUM_OUTPUT_SURFACES; i++)
+  for (int i=0; i < m_outPicsNum; i++)
   {
 //    GLXPixmap glPixmap = m_allOutPic[i].glPixmap;
 //    if (glPixmap && m_allOutPic[i].bound)
@@ -2257,7 +2591,7 @@ void CVDPAU::GLFiniInterop()
 
   glVDPAUFiniNV();
 
-  for (int i=0; i < NUM_OUTPUT_SURFACES; i++)
+  for (int i=0; i < m_outPicsNum; i++)
   {
     if (glIsTexture(m_allOutPic[i].texture[0]))
     {
@@ -2323,7 +2657,7 @@ bool CVDPAU::GLUnmapSurface(OutputPicture *outPic)
 
 bool CVDPAU::GLRegisterOutputSurfaces()
 {
-  for (int i=0; i<NUM_OUTPUT_SURFACES;i++)
+  for (int i=0; i<m_outPicsNum;i++)
   {
     glGenTextures(1, m_allOutPic[i].texture);
     m_allOutPic[i].glVdpauSurface = glVDPAURegisterOutputSurfaceNV((GLvoid*)m_allOutPic[i].outputSurface,
@@ -2452,11 +2786,6 @@ GLuint CVDPAU::GLGetSurfaceTexture(int plane, int field, int flipBufferIdx)
 
   return glReturn;
 }
-
-//int CVDPAU::NextBuffer()
-//{
-//  return (m_flipBufferIdx + 1) % 3;
-//}
 
 //long CVDPAU::Release()
 //{

@@ -234,7 +234,7 @@ void CDVDPlayerAudio::OpenStream( CDVDStreamInfo &hints, CDVDAudioCodec* codec )
   m_integral = 0;
   m_skipdupcount = 0;
   m_prevskipped = false;
-  m_syncclock = true;
+  //m_syncclock = true;
   m_errortime = CurrentHostCounter();
   m_silence = false;
 
@@ -441,7 +441,7 @@ int CDVDPlayerAudio::DecodeFrame(DVDAudioFrame &audioframe, bool bDropPacket)
       m_ptsOutput.Flush();
       m_ptsInput.Flush();
       m_resampler.Flush();
-      m_syncclock = true;
+      //m_syncclock = true;
       m_stalled   = true;
       m_started   = false;
 
@@ -487,7 +487,7 @@ int CDVDPlayerAudio::DecodeFrame(DVDAudioFrame &audioframe, bool bDropPacket)
       {
         m_ptsOutput.Flush();
         m_resampler.Flush();
-        m_syncclock = true;
+        //m_syncclock = true;
         if (m_speed != DVD_PLAYSPEED_PAUSE)
           m_dvdAudio.Flush();
         m_dvdAudio.Pause();
@@ -683,7 +683,9 @@ void CDVDPlayerAudio::HandleSyncError(double duration)
   double error = m_ptsOutput.Current() - clock;
   int64_t now;
 
-  if( fabs(error) > DVD_MSEC_TO_TIME(100) || m_syncclock )
+  //if( fabs(error) > DVD_MSEC_TO_TIME(100) || m_syncclock )
+  //audio based clock sync is bad idea for smooth video
+  if( fabs(error) > DVD_MSEC_TO_TIME(500) )
   {
     m_pClock->Discontinuity(clock+error);
     if(m_speed == DVD_PLAYSPEED_NORMAL)
@@ -693,7 +695,18 @@ void CDVDPlayerAudio::HandleSyncError(double duration)
     m_errorcount = 0;
     m_skipdupcount = 0;
     m_error = 0;
-    m_syncclock = false;
+    //m_syncclock = false;
+    m_errortime = CurrentHostCounter();
+
+    return;
+  }
+  else if( fabs(error) > DVD_MSEC_TO_TIME(200) )
+  {
+    m_skipdupcount = (int)(error / 2 / duration); //just simple fast converge towards correct value until under this threshold
+
+    m_errorbuff = 0;
+    m_errorcount = 0;
+    m_error = 0;
     m_errortime = CurrentHostCounter();
 
     return;
@@ -714,8 +727,8 @@ void CDVDPlayerAudio::HandleSyncError(double duration)
   m_errorbuff += error;
   m_errorcount++;
 
-  //check if measured error for 1 second
-  now = CurrentHostCounter();
+  //check if measured error for 2 second
+  now = 2 * CurrentHostCounter();
   if ((now - m_errortime) >= m_freq)
   {
     m_errortime = now;

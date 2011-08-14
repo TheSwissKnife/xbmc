@@ -139,9 +139,12 @@ CLinuxRendererGL::CLinuxRendererGL()
   m_renderQuality = RQ_SINGLEPASS;
   m_iFlags = 0;
 
-  m_iYV12RenderBuffer = 0;
-  m_iNextRenderBuffer = 0;
-  m_iDisplayedRenderBuffer = 2;
+  m_iLastRenderBuffer = -1;
+  m_iLastDisplayedRenderBuffer = -1;
+  m_iCurrentRenderBuffer = 0;
+  m_iOutputRenderBuffer = 0;
+  m_iDisplayedRenderBuffer = 0;
+  m_NumRenderBuffers = NUM_BUFFERS;
   m_flipindex = 0;
   m_currentField = FIELD_FULL;
   m_reloadShaders = 0;
@@ -210,7 +213,7 @@ bool CLinuxRendererGL::ValidateRenderer()
   if (!m_bImageReady)
     return false;
 
-  int index = m_iYV12RenderBuffer;
+  int index = m_iCurrentRenderBuffer;
   YUVBUFFER& buf =  m_buffers[index];
 
   if (!buf.fields[FIELD_FULL][0].id)
@@ -225,8 +228,9 @@ bool CLinuxRendererGL::ValidateRenderer()
 
 void CLinuxRendererGL::ManageTextures()
 {
-  m_NumYV12Buffers = 3;
-  //m_iYV12RenderBuffer = 0;
+  // do we need this at all?
+  //m_NumRenderBuffers = NUM_BUFFERS;
+  //m_iCurrentRenderBuffer = 0;
   return;
 }
 
@@ -245,16 +249,17 @@ bool CLinuxRendererGL::ValidateRenderTarget()
      // create the yuv textures
     LoadShaders();
 
-    for (int i = 0 ; i < m_NumYV12Buffers ; i++)
+    for (int i = 0 ; i < m_NumRenderBuffers ; i++)
     {
       (this->*m_textureCreate)(i);
       m_buffers[i].loaded = false;
     }
 
     m_iLastRenderBuffer = -1;
-    m_iYV12RenderBuffer = 0;
-    m_iNextRenderBuffer = 0;
-    m_iDisplayedRenderBuffer = 2;
+    m_iLastDisplayedRenderBuffer = -1;
+    m_iCurrentRenderBuffer = 0;
+    m_iOutputRenderBuffer = 0;
+    m_iDisplayedRenderBuffer = 0;
 
     m_bValidated = true;
     return true;
@@ -264,6 +269,7 @@ bool CLinuxRendererGL::ValidateRenderTarget()
 
 bool CLinuxRendererGL::Configure(unsigned int width, unsigned int height, unsigned int d_width, unsigned int d_height, float fps, unsigned flags)
 {
+CLog::Log(LOGDEBUG, "ASB: CLinuxRendererGL::Configure");
   m_sourceWidth = width;
   m_sourceHeight = height;
   m_fps = fps;
@@ -285,13 +291,14 @@ bool CLinuxRendererGL::Configure(unsigned int width, unsigned int height, unsign
   // frame is loaded after every call to Configure().
   m_bValidated = false;
 
-  for (int i = 0 ; i<m_NumYV12Buffers ; i++)
+  for (int i = 0 ; i<m_NumRenderBuffers ; i++)
     m_buffers[i].image.flags = 0;
 
   m_iLastRenderBuffer = -1;
-  m_iYV12RenderBuffer = 0;
-  m_iNextRenderBuffer = 0;
-  m_iDisplayedRenderBuffer = 2;
+  m_iLastDisplayedRenderBuffer = -1;
+  m_iCurrentRenderBuffer = 0;
+  m_iOutputRenderBuffer = 0;
+  m_iDisplayedRenderBuffer = 0;
 
   m_nonLinStretch    = false;
   m_nonLinStretchGui = false;
@@ -302,10 +309,10 @@ bool CLinuxRendererGL::Configure(unsigned int width, unsigned int height, unsign
   return true;
 }
 
-int CLinuxRendererGL::NextYV12Texture()
-{
-  return (m_iYV12RenderBuffer + 1) % m_NumYV12Buffers;
-}
+//int CLinuxRendererGL::GetNextRenderBuffer()
+//{
+//  return (m_iCurrentRenderBuffer + 1) % m_NumRenderBuffers;
+//}
 
 int CLinuxRendererGL::GetImage(YV12Image *image, int source, bool readonly)
 {
@@ -314,7 +321,8 @@ int CLinuxRendererGL::GetImage(YV12Image *image, int source, bool readonly)
 
   /* take next available buffer */
   if( source == AUTOSOURCE )
-    source = NextYV12Texture();
+    source = GetNextRenderBufferIndex();
+  if (source == -1) return -1;
 
   YV12Image &im = m_buffers[source].image;
 
@@ -347,7 +355,10 @@ int CLinuxRendererGL::GetImage(YV12Image *image, int source, bool readonly)
   image->cshift_y = im.cshift_y;
   image->pPresenttime = &im.presenttime;
   image->pSync    = &im.sync;
-  image->pPts = &im.pts;
+  image->pPts     = &im.pts;
+  image->pId      = &im.Id;
+  image->pFrameDur = &im.framedur;
+  image->pVClockResync = &im.vclockresync;
   image->pPlaySpeed = &im.playspeed;
 
   return source;
@@ -573,7 +584,7 @@ void CLinuxRendererGL::UploadYV12Texture(int source)
 
 void CLinuxRendererGL::Reset()
 {
-  for(int i=0; i<m_NumYV12Buffers; i++)
+  for(int i=0; i<m_NumRenderBuffers; i++)
   {
     /* reset all image flags, this will cleanup textures later */
     m_buffers[i].image.flags = 0;
@@ -591,7 +602,7 @@ void CLinuxRendererGL::Update(bool bPauseDrawing)
 
 void CLinuxRendererGL::RenderUpdate(bool clear, DWORD flags, DWORD alpha)
 {
-  int index = m_iYV12RenderBuffer;
+  int index = m_iCurrentRenderBuffer;
 
   if (!ValidateRenderer())
   {
@@ -613,8 +624,8 @@ void CLinuxRendererGL::RenderUpdate(bool clear, DWORD flags, DWORD alpha)
     // render the previous frame if this one isn't ready yet
     if (m_iLastRenderBuffer > -1)
     {
-      m_iYV12RenderBuffer = m_iLastRenderBuffer;
-      index = m_iYV12RenderBuffer;
+      m_iCurrentRenderBuffer = m_iLastRenderBuffer;
+      index = m_iCurrentRenderBuffer;
     }
   }
   else
@@ -732,35 +743,47 @@ void CLinuxRendererGL::DrawBlackBars()
 
 void CLinuxRendererGL::FlipPage(int source)
 {
-  UnBindPbo(m_buffers[m_iYV12RenderBuffer]);
+  UnBindPbo(m_buffers[m_iCurrentRenderBuffer]);
 
-  if( source >= 0 && source < m_NumYV12Buffers )
-    m_iYV12RenderBuffer = source;
+  int curr = m_iCurrentRenderBuffer;
+  if( source >= 0 && source < m_NumRenderBuffers )
+    m_iCurrentRenderBuffer = source;
   else
-    m_iYV12RenderBuffer = NextYV12Texture();
+    m_iCurrentRenderBuffer = GetNextRenderBufferIndex();
+  // if return -1 then flip could not happen as buffer not yet filled so we revert (caller should check possible before calling)
+  if (m_iCurrentRenderBuffer == -1)
+     m_iCurrentRenderBuffer = curr;
 
-  BindPbo(m_buffers[m_iYV12RenderBuffer]);
+  BindPbo(m_buffers[m_iCurrentRenderBuffer]);
 
-  m_buffers[m_iYV12RenderBuffer].flipindex = ++m_flipindex;
+  m_buffers[m_iCurrentRenderBuffer].flipindex = ++m_flipindex;
 
   return;
 }
 
-void CLinuxRendererGL::NotifyFlip()
+void CLinuxRendererGL::NotifyDisplayFlip()
 {
   if (!m_bValidated)
     return;
 
-  m_iDisplayedRenderBuffer = (m_iYV12RenderBuffer+m_NumYV12Buffers-1)
-                             % m_NumYV12Buffers;
+  // flip 'displayed' render buffer index to signify that this buffer can now be considered free to re-use
+  // we can assume that buffer prior to the current render buffer is safe to re-use.
+  // If we get notified a second time and render buffer has not moved then we can also assume the render buffer itself
+  // is now to safe to re-use.
+  int last = m_iDisplayedRenderBuffer;
+  m_iDisplayedRenderBuffer = (m_iCurrentRenderBuffer + m_NumRenderBuffers - 1) % m_NumRenderBuffers;
+  if (m_iDisplayedRenderBuffer == last)
+     m_iDisplayedRenderBuffer = m_iCurrentRenderBuffer;
+  m_iLastDisplayedRenderBuffer = last;
 }
 
 bool CLinuxRendererGL::HasFreeBuffer()
 {
   if (!m_bValidated)
     return false;
-
-  if (m_iNextRenderBuffer == m_iDisplayedRenderBuffer)
+  // we have a free buffer to prepare for render when we have not yet caught up with 
+  // the 'displayed' render buffer index as we don't allow incrementing (flipping) past this value 
+  if (m_iOutputRenderBuffer == m_iDisplayedRenderBuffer && m_iDisplayedRenderBuffer != m_iCurrentRenderBuffer)
     return false;
   else
     return true;
@@ -768,30 +791,34 @@ bool CLinuxRendererGL::HasFreeBuffer()
 
 void CLinuxRendererGL::LogBuffers()
 {
-  CLog::Log(LOGNOTICE, "-------------- render: %d", m_iYV12RenderBuffer);
-  CLog::Log(LOGNOTICE, "-------------- next: %d", m_iNextRenderBuffer);
+  CLog::Log(LOGNOTICE, "-------------- render: %d", m_iCurrentRenderBuffer);
+  CLog::Log(LOGNOTICE, "-------------- output: %d", m_iOutputRenderBuffer);
   CLog::Log(LOGNOTICE, "-------------- display: %d", m_iDisplayedRenderBuffer);
 }
 
-int CLinuxRendererGL::GetNextBufferIndex()
+int CLinuxRendererGL::FlipFreeBuffer()
 {
+  // return new free buffer index if successfully flipped, -1 otherwisw
   if (!m_bValidated)
     return -1;
 
-  if (m_iNextRenderBuffer == m_iDisplayedRenderBuffer)
+  if (HasFreeBuffer())
+  {
+     m_iOutputRenderBuffer = (m_iOutputRenderBuffer + 1) % m_NumRenderBuffers;
+     return m_iOutputRenderBuffer;
+  }
+  else
     return -1;
-  m_iNextRenderBuffer = (m_iNextRenderBuffer+1) % m_NumYV12Buffers;
-  return m_iNextRenderBuffer;
 }
 
-int CLinuxRendererGL::GetCurrentBufferIndex()
+int CLinuxRendererGL::GetNextRenderBufferIndex()
 {
   if (!m_bValidated)
     return -1;
-
-  if (m_iNextRenderBuffer == m_iYV12RenderBuffer)
+  // if output buffer index has not moved forward render buffer can't
+  if (m_iOutputRenderBuffer == m_iCurrentRenderBuffer)
     return -1;
-  return (m_iYV12RenderBuffer+1) % m_NumYV12Buffers;
+  return (m_iCurrentRenderBuffer + 1) % m_NumRenderBuffers;
 }
 
 void CLinuxRendererGL::ReleaseProcessor()
@@ -815,10 +842,12 @@ unsigned int CLinuxRendererGL::PreInit()
   UnInit();
   m_resolution = RES_PAL_4x3;
 
-  m_iYV12RenderBuffer = 0;
-  m_iNextRenderBuffer = 0;
-  m_iDisplayedRenderBuffer = 2;
-  m_NumYV12Buffers = 3;
+  m_iLastRenderBuffer = -1;
+  m_iLastDisplayedRenderBuffer = -1;
+  m_iCurrentRenderBuffer = 0;
+  m_iOutputRenderBuffer = 0;
+  m_iDisplayedRenderBuffer = 0;
+  m_NumRenderBuffers = NUM_BUFFERS;
 
   // setup the background colour
   m_clearColour = (float)(g_advancedSettings.m_videoBlackBarColour & 0xff) / 0xff;
@@ -1545,7 +1574,7 @@ void CLinuxRendererGL::RenderVDPAU(int index, int field)
 {
 #ifdef HAVE_LIBVDPAU
   YUVPLANE &plane = m_buffers[index].fields[0][1];
-  CVDPAU   *vdpau = m_buffers[m_iYV12RenderBuffer].vdpau;
+  CVDPAU   *vdpau = m_buffers[m_iCurrentRenderBuffer].vdpau;
 
   if (!vdpau)
     return;
@@ -1768,7 +1797,7 @@ bool CLinuxRendererGL::RenderCapture(CRenderCapture* capture)
 
   capture->BeginRender();
 
-  Render(RENDER_FLAG_NOOSD, m_iYV12RenderBuffer);
+  Render(RENDER_FLAG_NOOSD, m_iCurrentRenderBuffer);
   // read pixels
   glReadPixels(0, rv.y2 - capture->GetHeight(), capture->GetWidth(), capture->GetHeight(),
                GL_BGRA, GL_UNSIGNED_BYTE, capture->GetRenderBuffer());
@@ -3217,7 +3246,7 @@ void CLinuxRendererGL::UploadRGBTexture(int source)
 
 void CLinuxRendererGL::SetTextureFilter(GLenum method)
 {
-  for (int i = 0 ; i<m_NumYV12Buffers ; i++)
+  for (int i = 0 ; i<m_NumRenderBuffers ; i++)
   {
     YUVFIELDS &fields = m_buffers[i].fields;
 
@@ -3305,7 +3334,7 @@ bool CLinuxRendererGL::Supports(EINTERLACEMETHOD method)
       CONF_FLAGS_FORMAT_MASK(m_iFlags) == CONF_FLAGS_FORMAT_VDPAU_420)
   {
 #ifdef HAVE_LIBVDPAU
-    CVDPAU *vdpau = m_buffers[m_iYV12RenderBuffer].vdpau;
+    CVDPAU *vdpau = m_buffers[m_iCurrentRenderBuffer].vdpau;
     if(vdpau)
       return vdpau->Supports(method);
 #endif
@@ -3397,7 +3426,7 @@ void CLinuxRendererGL::UnBindPbo(YUVBUFFER& buff)
 #ifdef HAVE_LIBVDPAU
 void CLinuxRendererGL::AddProcessor(CVDPAU* vdpau)
 {
-  YUVBUFFER &buf = m_buffers[NextYV12Texture()];
+  YUVBUFFER &buf = m_buffers[m_iOutputRenderBuffer];
   SAFE_RELEASE(buf.vdpau);
   buf.vdpau = (CVDPAU*)vdpau->Acquire();
 }
@@ -3406,7 +3435,7 @@ void CLinuxRendererGL::AddProcessor(CVDPAU* vdpau)
 #ifdef HAVE_LIBVA
 void CLinuxRendererGL::AddProcessor(VAAPI::CHolder& holder)
 {
-  YUVBUFFER &buf = m_buffers[NextYV12Texture()];
+  YUVBUFFER &buf = m_buffers[m_iOutputRenderBuffer];
   buf.vaapi.surface = holder.surface;
 }
 #endif

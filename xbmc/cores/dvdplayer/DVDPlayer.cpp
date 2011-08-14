@@ -1366,6 +1366,7 @@ void CDVDPlayer::ProcessSubData(CDemuxStream* pStream, DemuxPacket* pPacket)
 
   m_dvdPlayerSubtitle.SendMessage(new CDVDMsgDemuxerPacket(pPacket, drop));
 
+ CLog::Log(LOGDEBUG, "ASB: CDVDPlayer::ProcessSubData m_CurrentSubtitle.dts: %f pPacket->pts: %f drop: %i", m_CurrentSubtitle.dts, pPacket->pts, (int)drop);
   if(m_pInputStream && m_pInputStream->IsStreamType(DVDSTREAM_TYPE_DVD))
     m_dvdPlayerSubtitle.UpdateOverlayInfo((CDVDInputStreamNavigator*)m_pInputStream, LIBDVDNAV_BUTTON_NORMAL);
 }
@@ -1540,10 +1541,10 @@ void CDVDPlayer::HandlePlaySpeed()
     }
     else if (m_CurrentVideo.id >= 0
           &&  m_CurrentVideo.inited == true
-          &&  m_SpeedState.lastpts  != m_dvdPlayerVideo.GetCurrentPts()
+          &&  m_SpeedState.lastpts  != m_dvdPlayerVideo.GetCurrentDisplayPts()
           &&  m_SpeedState.lasttime != GetTime())
     {
-      m_SpeedState.lastpts  = m_dvdPlayerVideo.GetCurrentPts();
+      m_SpeedState.lastpts  = m_dvdPlayerVideo.GetCurrentDisplayPts();
       m_SpeedState.lasttime = GetTime();
       // check how much off clock video is when ff/rw:ing
       // a problem here is that seeking isn't very accurate
@@ -1559,7 +1560,8 @@ void CDVDPlayer::HandlePlaySpeed()
       error  = m_clock.GetClock() - m_SpeedState.lastpts;
       error *= m_playSpeed / abs(m_playSpeed);
 
-      if(error > DVD_MSEC_TO_TIME(1000))
+//TODO: sort this out based on my previous patches for a/v sync
+      if(error > DVD_MSEC_TO_TIME(2000))
       {
         CLog::Log(LOGDEBUG, "CDVDPlayer::Process - Seeking to catch up");
         __int64 iTime = (__int64)DVD_TIME_TO_MSEC(m_clock.GetClock() + m_State.time_offset + 500000.0 * m_playSpeed / DVD_PLAYSPEED_NORMAL);
@@ -1649,18 +1651,21 @@ bool CDVDPlayer::CheckPlayerInit(CCurrentStream& current, unsigned int source)
     current.startpts = current.dts;
 
     bool setclock = false;
-    if(m_playSpeed == DVD_PLAYSPEED_NORMAL)
-    {
-      if(     source == DVDPLAYER_AUDIO)
-        setclock = !m_CurrentVideo.inited;
-      else if(source == DVDPLAYER_VIDEO)
-        setclock = !m_CurrentAudio.inited;
-    }
-    else
-    {
-      if(source == DVDPLAYER_VIDEO)
-        setclock = true;
-    }
+//    if(m_playSpeed == DVD_PLAYSPEED_NORMAL)
+//    {
+//      if(     source == DVDPLAYER_AUDIO)
+//        setclock = !m_CurrentVideo.inited;
+//      else if(source == DVDPLAYER_VIDEO)
+//        setclock = !m_CurrentAudio.inited;
+//    }
+//    else
+//    {
+//      if(source == DVDPLAYER_VIDEO)
+//        setclock = true;
+//    }
+   // only set clock for video source
+   if (source == DVDPLAYER_VIDEO)
+       setclock = true;
 
     double starttime = current.startpts;
     if(m_CurrentAudio.inited
@@ -1681,7 +1686,13 @@ bool CDVDPlayer::CheckPlayerInit(CCurrentStream& current, unsigned int source)
         SendPlayerMessage(new CDVDMsgDouble(CDVDMsg::GENERAL_DELAY, starttime), source);
     }
 
-    SendPlayerMessage(new CDVDMsgGeneralResync(current.dts, setclock), source);
+    double clockoffset; //set clock earlier than dts to allow for delay in decoding/processing through to display
+    if (m_playSpeed == DVD_PLAYSPEED_PAUSE)
+       clockoffset = DVD_MSEC_TO_TIME(500);
+    else
+       clockoffset = DVD_MSEC_TO_TIME(800);
+    //TODO: factor in rendermanager displaydelay function + 50ms (for example) rather than fixed values
+    SendPlayerMessage(new CDVDMsgGeneralResync(current.dts - clockoffset, setclock), source);
   }
   return false;
 }
@@ -2567,7 +2578,7 @@ void CDVDPlayer::GetGeneralInfo(CStdString& strGeneralInfo)
     double dDelay = (double)m_dvdPlayerVideo.GetDelay() / DVD_TIME_BASE;
 
     double apts = m_dvdPlayerAudio.GetCurrentPts();
-    double vpts = m_dvdPlayerVideo.GetCurrentPts();
+    double vpts = m_dvdPlayerVideo.GetCurrentDisplayPts();
     double dDiff = 0;
 
     if( apts != DVD_NOPTS_VALUE && vpts != DVD_NOPTS_VALUE )
@@ -3649,11 +3660,16 @@ bool CDVDPlayer::GetCurrentSubtitle(CStdString& strSubtitle)
   m_dvdPlayerSubtitle.GetCurrentSubtitle(strSubtitle, pts - m_dvdPlayerVideo.GetSubtitleDelay());
   
   // In case we stalled, don't output any subs
-  if (m_dvdPlayerVideo.IsStalled() || m_dvdPlayerAudio.IsStalled())
+  //if (m_dvdPlayerVideo.IsStalled() || m_dvdPlayerAudio.IsStalled())
+  if (m_dvdPlayerVideo.IsStalled())
     strSubtitle = m_lastSub;
   else
     m_lastSub = strSubtitle;
   
+ if (!strSubtitle.IsEmpty())
+ CLog::Log(LOGDEBUG, "ASB: CDVDPlayer::GetCurrentSubtitle pts: %f strSubtitle.IsEmpty(): %i strSubtitle: %s", pts, (int)strSubtitle.IsEmpty(), strSubtitle.c_str());
+ else
+ CLog::Log(LOGDEBUG, "ASB:ASB:  CDVDPlayer::GetCurrentSubtitle pts: %f strSubtitle.IsEmpty(): %i", pts, (int)strSubtitle.IsEmpty());
   return !strSubtitle.IsEmpty();
 }
 

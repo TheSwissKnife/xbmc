@@ -49,11 +49,17 @@ typedef struct YV12Image
   double   presenttime;
   EFIELDSYNC sync;
   double   pts;
+  int      Id;
+  bool   vclockresync;
+  double  framedur;
   int playspeed;
 
   double  *pPresenttime;
   EFIELDSYNC *pSync;
   double *pPts;
+  int    *pId;
+  bool   *pVClockResync;
+  double  *pFrameDur;
   int *pPlaySpeed;
 } YV12Image;
 
