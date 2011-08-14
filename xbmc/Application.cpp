@@ -2075,7 +2075,6 @@ void CApplication::Render()
       Sleep(singleFrameTime - frameTime);
   }
   m_lastFrameTime = XbmcThreads::SystemClockMillis();
-
   if (flip)
   {
     g_graphicsContext.Flip(g_windowManager.GetDirty());

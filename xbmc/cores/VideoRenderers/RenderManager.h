@@ -59,6 +59,8 @@ public:
   float GetAspectRatio() { CSharedLock lock(m_sharedSection); if (m_pRenderer) return m_pRenderer->GetAspectRatio(); else return 1.0f; };
   void Update(bool bPauseDrawing);
   void RenderUpdate(bool clear, DWORD flags = 0, DWORD alpha = 255);
+  double GetCurrentDisplayPts(int& playspeed);
+  double GetDisplayDelay();
   void SetupScreenshot();
 
   CRenderCapture* AllocRenderCapture();
@@ -73,7 +75,7 @@ public:
   bool IsConfigured();
 
 //  int AddVideoPicture(DVDVideoPicture& picture, int source, double presenttime, EFIELDSYNC sync, CDVDClock *clock, bool &late);
-  int AddVideoPicture(DVDVideoPicture& picture, int source, double pts, double presenttime, EFIELDSYNC sync, int playspeed);
+  int AddVideoPicture(DVDVideoPicture& picture, int source, double pts, double presenttime, EFIELDSYNC sync, int playspeed, double framedur, bool vclockresync = false);
 
   void FlipPage(volatile bool& bStop, double timestamp = 0.0, int source = -1, EFIELDSYNC sync = FS_NONE);
   int WaitForBuffer(volatile bool& bStop);
@@ -143,7 +145,7 @@ public:
   }
 
   double GetPresentTime();
-  void  WaitPresentTime(double presenttime);
+  void  WaitPresentTime(double presenttime, bool reset_corr = false);
 
   CStdString GetVSyncState();
 
@@ -171,11 +173,16 @@ protected:
   void PresentBob();
   void PresentBlend();
   void CheckNextBuffer();
+  double GetDisplaySignalToViewDelay();
+  void UpdatePostRenderClock();
+  void UpdatePreFlipClock();
+  void UpdatePostFlipClock();
 
   bool m_bPauseDrawing;   // true if we should pause rendering
 
   bool m_bIsStarted;
   CSharedSection m_sharedSection;
+  CSharedSection m_sharedDisplayInfoSection; //to guard to display info only
 
   bool m_bReconfigured;
 
@@ -194,6 +201,28 @@ protected:
   double     m_presenterr;
   double     m_errorbuff[ERRORBUFFSIZE];
   int        m_errorindex;
+  double m_prevwaitabserror; //previous wait absolute error fraction
+  double m_renderframedur; //frame being rendered: frame duration
+  double m_renderframepts; //frame being rendered: pts
+  int m_renderframeplayspeed; //frame being rendered: playspeed
+  double m_displayframedur;  //frame just released from render: frame duration value for next display frame
+  double m_displayframepts; //frame just released from render: pts
+  int m_displayframeplayspeed; //frame just released from render: playspeed 
+  double m_displayframeestclock; //frame just released from render: estimated clock time of actual display visibilty
+  double m_prevdisplayframedur;  //frame previously released from render: frame duration
+  int m_prevdisplayframeplayspeed; //frame previously released from render: playspeed 
+  double m_prevdisplayframeestclock; //frame previously released from render: estimated clock time of actual display visibilty
+  double m_displayrefreshdur; //vblank interval in clock units
+  double m_refdisplayframepts; //reference display frame: pts
+  double m_refdisplayframeclock; //reference display frame: clock time of actual display visibilty
+  int m_refdisplayframeplayspeed; //reference display frame: playspeed
+  bool m_flipasync; //true if flip/swap is done asynchronously
+  double m_preflipclock; //clock time of last flip request
+  double m_postflipclock; //clock time of last flip request completion
+  double m_postrenderclock; //clock time after last render to back buffer request completion
+  int m_shortdisplaycount; //estimated count of frames displayed for shorter period than expected
+  int m_longdisplaycount; //estimated count of frames displayed for longer period than expected
+
   EFIELDSYNC m_presentfield;
   EINTERLACEMETHOD m_presentmethod;
   EPRESENTSTEP     m_presentstep;

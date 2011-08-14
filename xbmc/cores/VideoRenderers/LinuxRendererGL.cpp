@@ -264,6 +264,7 @@ bool CLinuxRendererGL::ValidateRenderTarget()
 
 bool CLinuxRendererGL::Configure(unsigned int width, unsigned int height, unsigned int d_width, unsigned int d_height, float fps, unsigned flags)
 {
+  CLog::Log(LOGDEBUG, "ASB: CLinuxRendererGL::Configure");
   m_sourceWidth = width;
   m_sourceHeight = height;
   m_fps = fps;
@@ -348,6 +349,8 @@ int CLinuxRendererGL::GetImage(YV12Image *image, int source, bool readonly)
   image->pPresenttime = &im.presenttime;
   image->pSync    = &im.sync;
   image->pPts = &im.pts;
+  image->pFrameDur = &im.framedur;
+  image->pVClockResync = &im.vclockresync;
   image->pPlaySpeed = &im.playspeed;
 
   return source;
@@ -585,6 +588,7 @@ void CLinuxRendererGL::Reset()
 void CLinuxRendererGL::Update(bool bPauseDrawing)
 {
   if (!m_bConfigured) return;
+  CLog::Log(LOGDEBUG, "ASB: CLinuxRendererGL::Update");
   ManageDisplay();
   ManageTextures();
 }
@@ -593,6 +597,7 @@ void CLinuxRendererGL::RenderUpdate(bool clear, DWORD flags, DWORD alpha)
 {
   int index = m_iYV12RenderBuffer;
 
+  CLog::Log(LOGDEBUG, "ASB: CLinuxRendererGL::RenderUpdate clear: %i index: %i", (int)clear, index);
   if (!ValidateRenderer())
   {
     if (clear) //if clear is set, we're expected to overwrite all backbuffer pixels, even if we have nothing to render
@@ -673,10 +678,12 @@ void CLinuxRendererGL::RenderUpdate(bool clear, DWORD flags, DWORD alpha)
   glFlush();
 
   g_graphicsContext.EndPaint();
+  CLog::Log(LOGDEBUG, "ASB: CLinuxRendererGL::RenderUpdate END index: %i m_iYV12RenderBuffer: %i m_iLastRenderBuffer: %i", index, m_iYV12RenderBuffer, m_iLastRenderBuffer);
 }
 
 void CLinuxRendererGL::ClearBackBuffer()
 {
+  CLog::Log(LOGDEBUG, "ASB: CLinuxRendererGL::ClearBackBuffer");
   //set the entire backbuffer to black
   glClearColor(m_clearColour, m_clearColour, m_clearColour, 0);
   glClear(GL_COLOR_BUFFER_BIT);
@@ -742,6 +749,7 @@ void CLinuxRendererGL::FlipPage(int source)
   BindPbo(m_buffers[m_iYV12RenderBuffer]);
 
   m_buffers[m_iYV12RenderBuffer].flipindex = ++m_flipindex;
+  CLog::Log(LOGDEBUG, "CLinuxRendererGL::FlipPage m_iYV12RenderBuffer: %i m_buffers[m_iYV12RenderBuffer].flipindex: %i", m_iYV12RenderBuffer, m_buffers[m_iYV12RenderBuffer].flipindex);
 
   return;
 }
@@ -753,6 +761,7 @@ void CLinuxRendererGL::NotifyFlip()
 
   m_iDisplayedRenderBuffer = (m_iYV12RenderBuffer+m_NumYV12Buffers-1)
                              % m_NumYV12Buffers;
+  CLog::Log(LOGDEBUG, "CLinuxRendererGL::NotifyFlip m_iDisplayedRenderBuffer: %i m_iNextRenderBuffer: %i m_iYV12RenderBuffer: %i", m_iDisplayedRenderBuffer, m_iNextRenderBuffer, m_iYV12RenderBuffer);
 }
 
 bool CLinuxRendererGL::HasFreeBuffer()
@@ -773,7 +782,7 @@ void CLinuxRendererGL::LogBuffers()
   CLog::Log(LOGNOTICE, "-------------- display: %d", m_iDisplayedRenderBuffer);
 }
 
-int CLinuxRendererGL::GetNextBufferIndex()
+int CLinuxRendererGL::GetNextFreeBufferIndex()
 {
   if (!m_bValidated)
     return -1;
@@ -783,6 +792,13 @@ int CLinuxRendererGL::GetNextBufferIndex()
   m_iNextRenderBuffer = (m_iNextRenderBuffer+1) % m_NumYV12Buffers;
   return m_iNextRenderBuffer;
 }
+
+/*
+int CLinuxRendererGL::GetFutureFreeBufferIndex()
+{
+  return (m_iNextRenderBuffer + 1) % m_NumYV12Buffers;
+}
+*/
 
 int CLinuxRendererGL::GetCurrentBufferIndex()
 {
@@ -1169,6 +1185,7 @@ void CLinuxRendererGL::Render(DWORD flags, int renderBuffer)
 {
 #ifdef HAVE_LIBVDPAU
   CVDPAU   *vdpau = m_buffers[renderBuffer].vdpau;
+  CLog::Log(LOGDEBUG, "ASB: CLinuxRendererGL::Render vdpau: %i", (int)vdpau);
   if (vdpau)
     if (!vdpau->IsBufferValid(renderBuffer))
     {
@@ -1549,6 +1566,7 @@ void CLinuxRendererGL::RenderVDPAU(int index, int field)
 
   if (!vdpau)
     return;
+  CLog::Log(LOGDEBUG, "ASB: CLinuxRendererGL::RenderVDPAU m_iYV12RenderBuffer: %i", m_iYV12RenderBuffer);
 
   glEnable(m_textureTarget);
   glActiveTextureARB(GL_TEXTURE0);
@@ -2323,6 +2341,7 @@ void CLinuxRendererGL::UploadVDPAUTexture(int index)
   YUVFIELDS &fields = m_buffers[index].fields;
   YUVPLANE &plane = fields[0][0];
 
+  CLog::Log(LOGDEBUG, "CLinuxRendererGL::UploadVDPAUTexture index: %i", index);
   if (!vdpau)
   {
     fields[0][1].id = plane.id;
@@ -2353,6 +2372,7 @@ void CLinuxRendererGL::UploadVDPAUTexture(int index)
     CLog::Log(LOGWARNING, "CLinuxRendererGL::UploadVDPAUTexture - error getting texture");
   }
 
+  CLog::Log(LOGDEBUG, "CLinuxRendererGL::UploadVDPAUTexture index: %i vdpau->SetTexture ret: %i", index, ret);
   glPixelStorei(GL_UNPACK_ALIGNMENT,1); //what's this for?
   glDisable(m_textureTarget);
 
@@ -2910,6 +2930,7 @@ bool CLinuxRendererGL::CreateYUV422PackedTexture(int index)
 
 void CLinuxRendererGL::ToRGBFrame(YV12Image* im, unsigned flipIndexPlane, unsigned flipIndexBuf)
 {
+  CLog::Log(LOGDEBUG, "ASB: CLinuxRendererGL::ToRGBFrame");
   if(m_rgbBufferSize != m_sourceWidth * m_sourceHeight * 4)
     SetupRGBBuffer();
   else if(flipIndexPlane == flipIndexBuf)
@@ -3397,9 +3418,13 @@ void CLinuxRendererGL::UnBindPbo(YUVBUFFER& buff)
 #ifdef HAVE_LIBVDPAU
 void CLinuxRendererGL::AddProcessor(CVDPAU* vdpau)
 {
-  YUVBUFFER &buf = m_buffers[NextYV12Texture()];
+  //YUVBUFFER &buf = m_buffers[NextYV12Texture()];
+  //YUVBUFFER &buf = m_buffers[GetFutureFreeBufferIndex()];
+  YUVBUFFER &buf = m_buffers[m_iNextRenderBuffer];
   SAFE_RELEASE(buf.vdpau);
   buf.vdpau = (CVDPAU*)vdpau->Acquire();
+  //CLog::Log(LOGDEBUG, "ASB: CLinuxRendererGL::AddProcessor index: %i buf.vdpau: %i", GetFutureFreeBufferIndex(), (int)buf.vdpau);
+  CLog::Log(LOGDEBUG, "ASB: CLinuxRendererGL::AddProcessor index: %i buf.vdpau: %i", m_iNextRenderBuffer, (int)buf.vdpau);
 }
 #endif
 

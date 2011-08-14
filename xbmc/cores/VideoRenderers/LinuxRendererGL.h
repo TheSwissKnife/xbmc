@@ -136,7 +136,8 @@ public:
   virtual void         Upload(int source);
   virtual void         NotifyFlip();
   virtual bool         HasFreeBuffer();
-  virtual int          GetNextBufferIndex();
+  //virtual int          GetNextBufferIndex();
+  virtual int          GetNextFreeBufferIndex();
   virtual int          GetCurrentBufferIndex();
   virtual void         ReleaseProcessor();
   virtual void         LogBuffers();

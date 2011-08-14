@@ -41,6 +41,7 @@ CDVDPlayerVideoOutput::CDVDPlayerVideoOutput(CDVDPlayerVideo *videoplayer)
   m_glPixmap = 0;
   m_recover = true;
   m_configuring = false;
+  m_outputprevpic = false;
 }
 
 CDVDPlayerVideoOutput::~CDVDPlayerVideoOutput()
@@ -81,6 +82,7 @@ void CDVDPlayerVideoOutput::Dispose()
   StopThread();
   m_recover = true;
   m_configuring = false;
+  m_outputprevpic = false;
 }
 
 void CDVDPlayerVideoOutput::OnStartup()
@@ -161,7 +163,23 @@ void CDVDPlayerVideoOutput::Process()
   while (!m_bStop)
   {
     lock.Enter();
-    if (!m_toOutputMessage.empty() && !m_configuring)
+    if (m_outputprevpic && !m_configuring)
+    {
+      if (m_recover)
+      {
+        if (RefreshGlxContext())
+          m_recover = false;
+      }
+      lock.Leave();
+      FromOutputMessage fromMsg;
+      fromMsg.iResult = m_pVideoPlayer->OutputPicture(&m_picture,m_pts);
+      lock.Enter();
+      m_fromOutputMessage.push(fromMsg);
+      lock.Leave();
+      m_fromMsgSignal.Set();
+      m_outputprevpic = false;
+    } 
+    else if (!m_toOutputMessage.empty() && !m_configuring)
     {
       if (m_recover)
       {
@@ -190,6 +208,7 @@ void CDVDPlayerVideoOutput::Process()
         {
           fromMsg.iResult = EOS_CONFIGURE;
           m_configuring = true;
+          m_outputprevpic = true;
         }
         else
         {

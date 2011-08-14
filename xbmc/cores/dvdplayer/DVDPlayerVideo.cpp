@@ -230,6 +230,7 @@ void CDVDPlayerVideo::OpenStream(CDVDStreamInfo &hint, CDVDVideoCodec* codec)
                       g_guiSettings.GetBool("videoplayer.adjustrefreshrate");
   ResetFrameRateCalc();
 
+  ResetDropInfo();
 
 //  m_iDroppedRequest = 0;
 //  m_iLateFrames = 0;
@@ -861,7 +862,7 @@ void CDVDPlayerVideo::Process()
 
 int CDVDPlayerVideo::CalcDropRequirement()
 {
-  // take g_renderManger.GetDisplayPts(&playspeed) which returns an interpolated pts in
+  // take g_renderManger.GetCurrentDisplayPts(&playspeed) which returns an interpolated pts in
   // of the video frame being displayed (or about to be displayed),
   // and the playspeed applied at the time it was presented
   // - use this information to update the lateness tracking structure m_dropinfo which should
@@ -880,17 +881,26 @@ int CDVDPlayerVideo::CalcDropRequirement()
   m_dropinfo.iCalcId++;
   int iDPlaySpeed = -999;  //init invalid playspeed
 
+/*
 // temporary
   double fCurAbsClock;
   double fCurClock = m_pClock->GetClock(fCurAbsClock, true);
   iDPlaySpeed = m_speed;
+  double fDPts = m_iCurrentPts + ((fCurAbsClock - m_iCurrentPtsClock) * iDPlaySpeed / DVD_PLAYSPEED_NORMAL);
+  int iRDPlaySpeed;
+  double fRDPts = g_renderManager.GetCurrentDisplayPts(iRDPlaySpeed);
+  CLog::Log(LOGDEBUG,"ASB: CalcDropRequirement fDPts: %f fRDPts: %f delta: %f", fDPts, fRDPts, fDPts - fRDPts);
   if (m_iCurrentPts == DVD_NOPTS_VALUE || iDPlaySpeed == 0)
      return 0;
-  double fDPts = m_iCurrentPts + ((fCurAbsClock - m_iCurrentPtsClock) * iDPlaySpeed / DVD_PLAYSPEED_NORMAL);
+  
+*/
 // end temporary
   //proper:
-  //double fCurClock = m_pClock->GetClock(true);
-  //double fDPts = g_renderManger.GetDisplayPts(&iDPlaySpeed);
+  double fCurClock = m_pClock->GetClock(true);
+  double fDPts = g_renderManager.GetCurrentDisplayPts(iDPlaySpeed);
+  if (fDPts == DVD_NOPTS_VALUE || iDPlaySpeed == 0)
+     return 0;
+//end proper
 
   int64_t Now = CurrentHostCounter();
   int iDropRequestDistance = 0; //min distance in call iterations between drop requests (0 meaning ok to drop every time)
@@ -1769,14 +1779,14 @@ int CDVDPlayerVideo::OutputPicture(DVDVideoPicture* pPicture, double pts)
     return EOS_DROPPED;
   }
 
-  index = g_renderManager.AddVideoPicture(*pPicture, index, pts, iCurrentClock + iSleepTime, mDisplayField, playspeed);
+  index = g_renderManager.AddVideoPicture(*pPicture, index, pts, iCurrentClock + iSleepTime, mDisplayField, playspeed, iFrameDuration);
 
   // video device might not be done yet
   while (index < 0 && !CThread::m_bStop &&
          CDVDClock::GetAbsoluteClock(false) < iCurrentClock + iSleepTime + DVD_MSEC_TO_TIME(500) )
   {
     Sleep(1);
-    index = g_renderManager.AddVideoPicture(*pPicture, index, pts, iCurrentClock + iSleepTime, mDisplayField, playspeed);
+    index = g_renderManager.AddVideoPicture(*pPicture, index, pts, iCurrentClock + iSleepTime, mDisplayField, playspeed, iFrameDuration);
   }
 
   if (index < 0)

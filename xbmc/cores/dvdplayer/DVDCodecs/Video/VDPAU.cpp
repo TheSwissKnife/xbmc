@@ -437,6 +437,7 @@ GLuint CVDPAU::GetTexture()
 
 void CVDPAU::BindPixmap(int flipBufferIdx)
 {
+  CLog::Log(LOGDEBUG,"ASB: VDPAU:BindPixmap flipBufferIdx: %i recover: %i m_vdpauOutputMethod: %i", flipBufferIdx, (int)recover, m_vdpauOutputMethod);
   if (recover)
     return;
 
@@ -445,6 +446,7 @@ void CVDPAU::BindPixmap(int flipBufferIdx)
   if (m_vdpauOutputMethod != OUTPUT_PIXMAP)
     return;
 
+  CLog::Log(LOGDEBUG,"ASB: VDPAU:BindPixmap flipBufferIdx: %i", flipBufferIdx);
   if (m_flipBuffer[flipBufferIdx])
   {
     GLXPixmap glPixmap = m_flipBuffer[flipBufferIdx]->glPixmap;
@@ -1725,6 +1727,7 @@ bool CVDPAU::GetPicture(AVCodecContext* avctx, AVFrame* frame, DVDVideoPicture* 
     if (m_usedOutPic.size() > 0)
     {
       m_presentPicture = m_usedOutPic.front();
+      CLog::Log(LOGDEBUG,"CVDPAU::GetPicture: m_presentPicture: %i", (int)m_presentPicture);
       m_usedOutPic.pop_front();
     }
     else
@@ -1875,6 +1878,7 @@ void CVDPAU::Present(int flipBufferIdx)
   }
 
   m_flipBuffer[flipBufferIdx] = m_presentPicture;
+CLog::Log(LOGDEBUG, "ASB CVDPAU::Present: m_flipBuffer[flipBufferIdx]: %"PRId64" flipBufferIdx: %i", (int64_t)m_flipBuffer[flipBufferIdx], flipBufferIdx);
   m_presentPicture = NULL;
 
 }

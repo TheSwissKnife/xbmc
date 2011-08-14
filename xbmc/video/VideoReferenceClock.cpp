@@ -1426,8 +1426,7 @@ int64_t CVideoReferenceClock::GetTime(int64_t* InterpolatedTime)
            m_LastIntTime = interpolatedTime;
         *InterpolatedTime = m_LastIntTime;
     }
-    else
-       return CurrTime + (int64_t)((double)vBlanksMissed * clockTickInterval);
+    return CurrTime + (int64_t)((double)vBlanksMissed * clockTickInterval);
   }
   else
   {
@@ -1604,11 +1603,15 @@ int CVideoReferenceClock::GetRefreshRate(double* interval /*= NULL*/)
   {
     if (interval)
       *interval = m_ClockSpeed / m_RefreshRate;
-
     return (int)m_RefreshRate;
   }
   else
+  {
+    // return approxmimate vblank interval and result -1 if non using vblank based clock
+    if (interval)
+      *interval = 1.0 / m_RefreshRate;
     return -1;
+  }
 }
 
 // return the vblank tick clock time that immediately follows the target time (only attempt reasonable accuracy for reporting purposes)
@@ -1623,13 +1626,17 @@ int64_t CVideoReferenceClock::GetNextTickTime(int64_t Target /* = 0 */)
         pVBlankInterval = m_SystemFrequency / m_RefreshRate;
      double clockTickInterval = UpdateInterval();
      SingleLock.Leave();
-     int64_t CurrTime = GetTime();
+     int64_t CurrTime = GetTime(false);
 
      if (Target == 0)
      {
         return CurrTime + (int64_t)clockTickInterval;
      }
-     else if (Target <= CurrTime) return CurrTime;
+     else if (Target < CurrTime) 
+     {
+        int64_t ticks = (CurrTime - Target) / pVBlankInterval;
+        return CurrTime - (int64_t)(ticks * clockTickInterval);
+     }
      else
      {
         int64_t ticks = (Target - CurrTime + pVBlankInterval) / pVBlankInterval;
