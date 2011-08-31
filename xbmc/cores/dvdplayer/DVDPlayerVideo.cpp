@@ -383,36 +383,21 @@ void CDVDPlayerVideo::Process()
       //Okey, start rendering at stream fps now instead, we are likely in a stillframe
       if( !m_stalled )
       {
-// TODO: This info message does not even reflect the code below it - what is the purposes of this 
         if(m_started)
           CLog::Log(LOGINFO, "CDVDPlayerVideo - Stillframe detected, switching to forced %f fps", m_fFrameRate);
         m_stalled = true;
         pts+= frametime*4;
-//This will set the pts for a different (older) picture, won't it?
         // drive pts for overlays (still frames)
         m_pVideoOutput->SetPts(m_pVideoOutput->GetPts() + frametime*4);
       }
 
-      //Waiting timed out, output last picture
-      // last picture is in render buffer, just don't flip
-      // only flip overlays
-//      if( picture.iFlags & DVP_FLAG_ALLOCATED )
-//      {
-        //Remove interlaced flag before outputting
-        //no need to output this as if it was interlaced
-//        picture.iFlags &= ~DVP_FLAG_INTERLACED;
-//        picture.iFlags |= DVP_FLAG_NOSKIP;
-//        OutputPicture(&picture, pts);
-//        pts+= frametime;
-//This will set the pts for a different (older) picture, won't it?
-        // drive pts for overlays
-        m_pVideoOutput->SetPts(m_pVideoOutput->GetPts() + frametime);
+      // drive pts for overlays
+      m_pVideoOutput->SetPts(m_pVideoOutput->GetPts() + frametime);
 
-        ToOutputMessage toMsg;
-        toMsg.bLastPic = true;
-        toMsg.iSpeed = m_speed;
-        m_pVideoOutput->SendMessage(toMsg);
-//      }
+      ToOutputMessage toMsg;
+      toMsg.bLastPic = true;
+      toMsg.iSpeed = m_speed;
+      m_pVideoOutput->SendMessage(toMsg);
 
       continue;
     }

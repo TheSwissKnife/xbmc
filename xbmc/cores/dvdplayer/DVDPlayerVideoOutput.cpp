@@ -42,6 +42,7 @@ CDVDPlayerVideoOutput::CDVDPlayerVideoOutput(CDVDPlayerVideo *videoplayer)
   m_glPixmap = 0;
   m_recover = true;
   m_configuring = false;
+  memset(&m_picture, 0, sizeof(DVDVideoPicture));
 }
 
 CDVDPlayerVideoOutput::~CDVDPlayerVideoOutput()
@@ -70,6 +71,8 @@ void CDVDPlayerVideoOutput::Reset(bool resetConfigure /* = false */)
     m_toOutputMessage.pop();
   while (!m_fromOutputMessage.empty())
       m_fromOutputMessage.pop();
+
+  memset(&m_picture, 0, sizeof(DVDVideoPicture));
 
   if (m_recover)
     Start();
@@ -176,7 +179,8 @@ void CDVDPlayerVideoOutput::Process()
 
       bool newPic = false;
       bool lastPic = false;
-      if (toMsg.bLastPic)
+      // only output last picture if allocated
+      if (toMsg.bLastPic && (m_picture.iFlags & DVP_FLAG_ALLOCATED))
       {
         lastPic = true;
       }
@@ -186,7 +190,8 @@ void CDVDPlayerVideoOutput::Process()
 
       if (newPic || lastPic)
       {
-        if (m_pVideoPlayer->CheckRenderConfig(&m_picture))
+        // only configure output after we got a new picture from decoder
+        if (newPic && m_pVideoPlayer->CheckRenderConfig(&m_picture))
         {
           fromMsg.iResult = EOS_CONFIGURE;
           m_configuring = true;
