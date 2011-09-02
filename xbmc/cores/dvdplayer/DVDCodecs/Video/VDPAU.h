@@ -38,12 +38,17 @@
 #include "threads/Thread.h"
 namespace Surface { class CSurface; }
 
-#define NUM_OUTPUT_SURFACES                9
-#define NUM_VIDEO_SURFACES_MPEG2           10  // (1 frame being decoded, 2 reference)
-#define NUM_VIDEO_SURFACES_H264            32 // (1 frame being decoded, up to 16 references)
-#define NUM_VIDEO_SURFACES_VC1             10  // (same as MPEG-2)
-#define NUM_OUTPUT_SURFACES_FOR_FULLHD     9
+#define NUM_RENDERBUF_PICS                 4 // ensure aligned with renderer buffer number
+#define NUM_OUTPUT_PICS                    11 // max length of picture queue from migration to output surface (from video surface) through to the buffer being copied to back buffer, must be at least one more than NUM_RENDERBUF_PICS
+//#define NUM_OUTPUT_SURFACES                9
+#define NUM_OUTPUT_SURFACES                11 // number of allocated output surfaces, actual number used for non-pixmap should ideally match NUM_OUTPUT_PICS, and for pixmap should ideally be NUM_OUTPUT_PICS - NUM_RENDER_BUFPICS
+
+//#define NUM_VIDEO_SURFACES_MPEG2           10  // (1 frame being decoded, 2 reference)
+//#define NUM_VIDEO_SURFACES_H264            32 // (1 frame being decoded, up to 16 references)
+//#define NUM_VIDEO_SURFACES_VC1             10  // (same as MPEG-2)
+//#define NUM_OUTPUT_SURFACES_FOR_FULLHD     9
 #define FULLHD_WIDTH                       1920
+#define MAX_PIC_Q_LENGTH                   20 //for non-interop_yuv this controls the max length of the decoded pic to render completion Q
 
 class CVDPAU
  : public CDVDVideoCodecFFmpeg::IHardwareDecoder, public CThread
@@ -78,13 +83,7 @@ public:
   virtual void SetDropState(bool bDrop);
   virtual bool FreeResources(bool test = false);
 
-  virtual int  Check(AVCodecContext* avctx) 
-  { 
-    if(CheckRecover(false))
-      return VC_FLUSHED;
-    else
-      return 0;
-  }
+  virtual int  Check(AVCodecContext* avctx);
   virtual const std::string Name() { return "vdpau"; }
 
   void SetWidthHeight(int width, int height);
@@ -93,6 +92,7 @@ public:
 
   void ReleasePixmap(int flipBufferIdx);
   void BindPixmap(int flipBufferIdx);
+  int PreBindAllPixmaps();
   bool IsBufferValid(int flipBufferIdx);
 
   PFNGLXBINDTEXIMAGEEXTPROC    glXBindTexImageEXT;
@@ -143,6 +143,7 @@ public:
   EINTERLACEMETHOD GetDeinterlacingMethod(bool log = false);
   void SetHWUpscaling();
   bool DiscardPresentPicture();
+  bool QueueIsFull();
 
   pictureAge picAge;
   volatile bool  recover;
@@ -154,6 +155,7 @@ public:
   float      tmpBrightness, tmpContrast;
   int        OutWidth, OutHeight;
   bool       upScale;
+  bool m_preBindPixmapsDone;
 
   static inline void ClearUsedForRender(vdpau_render_state **st)
   {
@@ -167,6 +169,7 @@ public:
   VdpCSCMatrix  m_CSCMatrix;
   VdpDevice     HasDevice() { return vdp_device != VDP_INVALID_HANDLE; };
   VdpChromaType vdp_chroma_type;
+  bool GenerateStudioCSCMatrix(VdpColorStandard colorStandard, VdpCSCMatrix &studioCSCMatrix);
 
 
   //  protected:
@@ -301,18 +304,19 @@ protected:
   std::queue<MixerMessage> m_mixerMessages;
   std::deque<MixerMessage> m_mixerInput;
   std::map<VdpVideoSurface, GLVideoSurface> m_videoSurfaceMap;
-
-  OutputPicture m_allOutPic[NUM_OUTPUT_SURFACES];
+  OutputPicture m_allOutPic[NUM_OUTPUT_PICS];
   std::deque<OutputPicture*> m_freeOutPic;
   std::deque<OutputPicture*> m_usedOutPic;
   OutputPicture *m_presentPicture;
-  OutputPicture *m_flipBuffer[3];
+  OutputPicture *m_lastReportedReadyPic;
+  OutputPicture *m_flipBuffer[NUM_RENDERBUF_PICS];
   unsigned int m_mixerCmd;
   CCriticalSection m_mixerSec, m_outPicSec, m_videoSurfaceSec, m_flipSec;
   CEvent m_picSignal;
   CEvent m_msgSignal;
   bool m_bVdpauDeinterlacing;
   bool m_binterlacedFrame;
+  int m_outPicsNum;
   int m_dropCount;
   volatile bool glInteropFinish;
   bool m_dropState;
@@ -339,4 +343,5 @@ protected:
 
 #define MIXER_CMD_FLUSH	0x01
 #define MIXER_CMD_HURRY	0x02
+#define MIXER_CMD_DRAIN	0x04
 };

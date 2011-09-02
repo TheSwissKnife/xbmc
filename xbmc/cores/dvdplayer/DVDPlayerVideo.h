@@ -87,20 +87,21 @@ public:
 
   bool InitializedOutputDevice();
 
-  double GetCurrentPts()                           { return m_iCurrentPts; }
   int    GetPullupCorrection()                     { return m_pullupCorrection.GetPatternLength(); }
 
+  double GetCurrentDisplayPts();
+  double GetCurrentPts();
   double GetOutputDelay(); /* returns the expected delay, from that a packet is put in queue */
   std::string GetPlayerInfo();
   int GetVideoBitrate();
 
   void SetSpeed(int iSpeed);
-  int OutputPicture(const DVDVideoPicture* src, double pts);
+  int OutputPicture(const DVDVideoPicture* src, double pts, int playspeed);
   bool CheckRenderConfig(const DVDVideoPicture* src);
   void ResumeAfterRefreshChange();
 
 #ifdef HAS_VIDEO_PLAYBACK
-  void ProcessOverlays(DVDVideoPicture* pSource, double pts);
+  int ProcessOverlays(DVDVideoPicture* pSource, double pts);
 #endif
 
   // classes
@@ -130,10 +131,10 @@ protected:
 
   void ProcessVideoUserData(DVDVideoUserData* pVideoUserData, double pts);
 
-  double m_iCurrentPts; // last pts displayed
+  double m_iCurrentPts; // last pts output to renderer pipe
   double m_iVideoDelay;
   double m_iSubtitleDelay;
-  double m_FlipTimeStamp; // time stamp of last flippage. used to play at a forced framerate
+//  double m_FlipTimeStamp; // time stamp of last flippage. used to play at a forced framerate
 
 //  int m_iLateFrames;
 //  int m_iDroppedFrames;
@@ -202,14 +203,15 @@ protected:
     int iSuccessiveDecoderDropRequests;
     int iSuccessiveOutputDropRequests;
   } m_dropinfo;
-  bool m_bJustDropped;
+  double m_fLastDecodedPictureClock; //time of last decoded picture 
+  double m_fPrevLastDecodedPictureClock; //time of decoded picture previous to last
   int m_iDecoderPresentDroppedFrames;
   int m_iOutputDroppedFrames;
   int m_iDecoderDroppedFrames;
   int m_iDroppedFrames;
   int m_iPlayerDropRequests;
 
-  double m_iCurrentPtsClock; //temporary
+//  double m_iCurrentPtsClock; //temporary
 
   std::string  m_formatstr;
   bool m_bAllowFullscreen;
@@ -224,6 +226,7 @@ protected:
 //  double m_dropbase;
 
   bool m_stalled;
+  bool m_streamEOF;
   bool m_started;
   bool m_refreshChanging;
   std::string m_codecname;

@@ -74,6 +74,7 @@ public:
 protected:
   static void   CheckSystemClock();
   static double SystemToAbsolute(int64_t system);
+  static int64_t AbsoluteToSystem(double absolute);
   double        SystemToPlaying(int64_t system);
 
   CSharedSection m_critSection;

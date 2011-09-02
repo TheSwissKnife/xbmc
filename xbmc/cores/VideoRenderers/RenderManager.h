@@ -47,6 +47,7 @@ class CVDPAU;
 struct DVDVideoPicture;
 
 #define ERRORBUFFSIZE 30
+#define NUM_DISPLAYINFOBUF 4
 
 class CXBMCRenderManager
 {
@@ -59,6 +60,8 @@ public:
   float GetAspectRatio() { CSharedLock lock(m_sharedSection); if (m_pRenderer) return m_pRenderer->GetAspectRatio(); else return 1.0f; };
   void Update(bool bPauseDrawing);
   void RenderUpdate(bool clear, DWORD flags = 0, DWORD alpha = 255);
+  double GetCurrentDisplayPts(int& playspeed);
+  double GetDisplayDelay();
   void SetupScreenshot();
 
   CRenderCapture* AllocRenderCapture();
@@ -72,13 +75,13 @@ public:
   bool Configure(unsigned int width, unsigned int height, unsigned int d_width, unsigned int d_height, float fps, unsigned flags, bool &bResChange);
   bool IsConfigured();
 
-//  int AddVideoPicture(DVDVideoPicture& picture, int source, double presenttime, EFIELDSYNC sync, CDVDClock *clock, bool &late);
-  int AddVideoPicture(DVDVideoPicture& picture, int source, double pts, double presenttime, EFIELDSYNC sync, int playspeed);
+  int AddVideoPicture(DVDVideoPicture& picture, double pts, double presenttime, int playspeed, bool vclockresync = false);
 
   void FlipPage(volatile bool& bStop, double timestamp = 0.0, int source = -1, EFIELDSYNC sync = FS_NONE);
   int WaitForBuffer(volatile bool& bStop);
   void ReleaseProcessor();
-  void NotifyFlip();
+  void NotifyDisplayFlip();
+  void UpdateDisplayInfo();
   unsigned int PreInit();
   void UnInit();
   void SetReconfigured();
@@ -89,6 +92,12 @@ public:
     CSharedLock lock(m_sharedSection);
     m_requestOverlayFlip = true;
     m_overlays.AddOverlay(o, pts);
+  }
+
+  int OverlayFlipOutput()
+  {
+    CSharedLock lock(m_sharedSection);
+    return m_overlays.FlipOutput();
   }
 
   void AddCleanup(OVERLAY::COverlay* o)
@@ -144,7 +153,7 @@ public:
   }
 
   double GetPresentTime();
-  void  WaitPresentTime(double presenttime);
+  void  WaitPresentTime(double presenttime, bool reset_corr = false);
 
   CStdString GetVSyncState();
 
@@ -172,11 +181,16 @@ protected:
   void PresentBob();
   void PresentBlend();
   void CheckNextBuffer();
+  double GetDisplaySignalToViewDelay();
+  void UpdatePostRenderClock();
+  void UpdatePreFlipClock();
+  void UpdatePostFlipClock();
 
   bool m_bPauseDrawing;   // true if we should pause rendering
 
   bool m_bIsStarted;
   CSharedSection m_sharedSection;
+  CSharedSection m_sharedDisplayInfoSection; //to guard to display info only
 
   bool m_bReconfigured;
 
@@ -195,6 +209,30 @@ protected:
   double     m_presenterr;
   double     m_errorbuff[ERRORBUFFSIZE];
   int        m_errorindex;
+  int        m_videoPicId; //id to track video pic 
+  bool m_vclockresync; //video to clock resync flagged
+  double m_prevwaitabserror; //previous wait absolute error fraction
+
+  struct FrameInfo
+  {
+    double framedur;  
+    double framepts; 
+    int    frameId; 
+    int    frameplayspeed;
+    double refreshdur; //vblank interval in clock units
+    double frameclock; //estimated clock time of actual display visibilty
+  };
+  FrameInfo m_displayinfo[NUM_DISPLAYINFOBUF]; //buffer of display frame infos 
+  FrameInfo m_renderinfo; //frame being rendered
+  FrameInfo m_refdisplayinfo; //reference display frame info
+
+  bool m_flipasync; //true if flip/swap is done asynchronously
+  double m_preflipclock; //clock time of last flip request
+  double m_postflipclock; //clock time of last flip request completion
+  double m_postrenderclock; //clock time after last render to back buffer request completion
+  int m_shortdisplaycount; //estimated count of frames displayed for shorter period than expected
+  int m_longdisplaycount; //estimated count of frames displayed for longer period than expected
+
   EFIELDSYNC m_presentfield;
   EINTERLACEMETHOD m_presentmethod;
   EPRESENTSTEP     m_presentstep;

@@ -500,6 +500,14 @@ static double pts_itod(int64_t pts)
   return u.pts_d;
 }
 
+bool CDVDVideoCodecFFmpeg::DiscardPicture()
+{
+  if(m_pHardware)
+    return m_pHardware->DiscardPresentPicture();
+  else //assume software decode discard is not required
+    return true;
+}
+
 int CDVDVideoCodecFFmpeg::Decode(BYTE* pData, int iSize, double dts, double pts)
 {
   int iGotPicture = 0, len = 0;
@@ -512,7 +520,7 @@ int CDVDVideoCodecFFmpeg::Decode(BYTE* pData, int iSize, double dts, double pts)
   bool bDecoderDropRequested = false;
   bool bDrain = false; // whether to try to drain buffered data
 
-  m_picSignal.Reset();
+//  m_picSignal.Reset();
 
   if (!m_pCodecContext)
     return VC_ERROR;
@@ -559,10 +567,21 @@ int CDVDVideoCodecFFmpeg::Decode(BYTE* pData, int iSize, double dts, double pts)
     if(pData)
     {
       result = m_pHardware->Check(m_pCodecContext);
+      if (result & VC_FULL)
+      {
+         //try to get some pic out of hardware to make some space
+         result &= ~VC_FULL;
+         // to drain or not to drain..? me thinks better not to so that we allow caller to not block here
+         result |= m_pHardware->Decode(m_pCodecContext, NULL, false);
+         result |= VC_AGAIN; //tell caller to try again later
+      }
       if (result & VC_FLUSHED)
          Reset();
+      
       if (result)
-        return result;
+      {
+        return result | VC_NOTDECODERDROPPED;
+      }
     }
     else
     {
@@ -572,10 +591,10 @@ int CDVDVideoCodecFFmpeg::Decode(BYTE* pData, int iSize, double dts, double pts)
       if (result & VC_FLUSHED)
       {
          Reset();
-         return result;
+         return result | VC_NOTDECODERDROPPED;
       }
       if (result & (VC_PICTURE | VC_ERROR))
-         return result;
+         return result | VC_NOTDECODERDROPPED;
       // else assume we should try to squeeze more data out of decoder
     }
   }
@@ -586,7 +605,7 @@ int CDVDVideoCodecFFmpeg::Decode(BYTE* pData, int iSize, double dts, double pts)
     if(pData == NULL)
       result = FilterProcess(NULL);
     if(result)
-      return result;
+      return result | VC_NOTDECODERDROPPED;
   }
 
   m_dts = dts;
@@ -603,7 +622,7 @@ int CDVDVideoCodecFFmpeg::Decode(BYTE* pData, int iSize, double dts, double pts)
 
   // if we got no packet input data and we have not been asked to try to empty the decoder then return VC_BUFFER
   if ((!bInputData) && (!bDrain))
-     return VC_BUFFER;
+     return VC_BUFFER | VC_NOTDECODERDROPPED;
 
   if (bDecoderDropRequested)
      m_iDecoderDropRequest++;
@@ -707,7 +726,8 @@ int CDVDVideoCodecFFmpeg::Decode(BYTE* pData, int iSize, double dts, double pts)
 
      m_iDecoderLastOutputPktNumber = m_iDecoderInputPktNumber;
      // best way to estimate if frame claims to be interlaced
-     bool frame_interlace_flag = m_pFrame->interlaced_frame || m_pFrame->top_field_first;
+     //bool frame_interlace_flag = m_pFrame->interlaced_frame || m_pFrame->top_field_first;
+     bool frame_interlace_flag = m_pFrame->interlaced_frame;
      if ((!m_bInterlacedMode) && frame_interlace_flag)
      {
         m_iInterlacedEnabledFrameNumber = m_iDecoderOutputFrameNumber;
@@ -1076,7 +1096,7 @@ bool CDVDVideoCodecFFmpeg::GetPicture(DVDVideoPicture* pDvdVideoPicture)
   if(m_pHardware)
   {
     bool bReturn = m_pHardware->GetPicture(m_pCodecContext, m_pFrame, pDvdVideoPicture);
-    m_picSignal.Set();
+    //m_picSignal.Set();
     return bReturn;
   }
 

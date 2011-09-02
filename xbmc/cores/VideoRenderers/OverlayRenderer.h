@@ -32,6 +32,8 @@ class CDVDOverlayImage;
 class CDVDOverlaySpu;
 class CDVDOverlaySSA;
 
+#define NUM_OVERLAYBUFFERS 4
+
 namespace OVERLAY {
 
   struct SRenderState
@@ -96,7 +98,10 @@ namespace OVERLAY {
     void AddOverlay(CDVDOverlay* o, double pts);
     void AddOverlay(COverlay*    o, double pts);
     void AddCleanup(COverlay*    o);
-    void Flip();
+    //void Flip();
+    int FlipRender();
+    int FlipOutput();
+    void NotifyDisplayFlip();
     void Render();
     void Flush();
 
@@ -124,9 +129,12 @@ namespace OVERLAY {
     void      Release(SElementV& list);
 
     CCriticalSection m_section;
-    SElementV        m_buffers[3];
+    SElementV        m_buffers[NUM_OVERLAYBUFFERS];
+
     int              m_decode;
     int              m_render;
+    int              m_displayedrender;
+    int              m_lastdisplayedrender;
 
     COverlayV        m_cleanup;
   };

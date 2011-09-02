@@ -37,13 +37,13 @@ struct ToOutputMessage
   ToOutputMessage()
   {
     fFrameTime = 0;
-    bPacketDrop = false;
+    bDrop = false;
     bNotToSkip = false;
     bLastPic = false;
     iSpeed = 0;
   };
   double fFrameTime;
-  bool bPacketDrop;
+  bool bDrop;
   bool bNotToSkip;
   bool bLastPic;
   int iSpeed;
@@ -77,7 +77,7 @@ protected:
   void OnStartup();
   void OnExit();
   void Process();
-  bool GetPicture(ToOutputMessage toMsg, FromOutputMessage &fromMsg);
+  bool GetPicture(ToOutputMessage toMsg);
   bool RefreshGlxContext();
   bool DestroyGlxContext();
 
@@ -89,6 +89,7 @@ protected:
   std::queue<FromOutputMessage> m_fromOutputMessage;
   CEvent m_toMsgSignal, m_fromMsgSignal;
   CCriticalSection m_criticalSection;
+  CCriticalSection m_msgSection;
   CDVDPlayerVideo *m_pVideoPlayer;
   GLXContext m_glContext;
   GLXWindow m_glWindow;
@@ -96,4 +97,5 @@ protected:
   GLXPixmap m_glPixmap;
   bool m_recover;
   bool m_configuring;
+  bool m_outputprevpic;
 };

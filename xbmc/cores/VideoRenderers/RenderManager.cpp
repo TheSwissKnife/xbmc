@@ -26,6 +26,7 @@
 #include "utils/MathUtils.h"
 #include "threads/SingleLock.h"
 #include "utils/log.h"
+#include "utils/TimeUtils.h"
 
 #include "Application.h"
 #include "settings/Settings.h"
@@ -112,10 +113,9 @@ CXBMCRenderManager::~CXBMCRenderManager()
   m_pRenderer = NULL;
 }
 
-/* These is based on CurrentHostCounter() */
 double CXBMCRenderManager::GetPresentTime()
 {
-  return CDVDClock::GetAbsoluteClock(false) / DVD_TIME_BASE;
+  return CDVDClock::GetAbsoluteClock(true) / DVD_TIME_BASE;
 }
 
 static double wrap(double x, double minimum, double maximum)
@@ -131,87 +131,141 @@ static double wrap(double x, double minimum, double maximum)
   return x;
 }
 
-void CXBMCRenderManager::WaitPresentTime(double presenttime)
+void CXBMCRenderManager::WaitPresentTime(double presenttime, bool reset_corr /* = false */)
 {
+  // The presenttime should reflect as best as possible the clock time when the 
+  // frame about to flipped to front buffer will then display
+  // For this we assume it will take one more vblank beyond the one we choose to wait for plus 
+  // the delay from signal to visible of the physical display device 
+
+  // In the case of smooth video mode (ie vblank based reference clock) we perform additional
+  // tracking correction:
+  //  To avoid any possible indeterminate behaviour around which clock tick value 
+  //  will best match in the wait function when presenttime is very close to tick time
+  //  we begin by setting our wait target time back half a tick from actual desired (so 
+  //  that the desired tick will take it distinctly past), and then we try to
+  //  track the delta between desired and tick value so that we can maintain this safe uniform 
+  //  position possibly drifting but if so gradually and smoothly until such time as we may 
+  //  then need to target a closer tick (resulting in a short or long display of a frame and if
+  //  short likely subsequently a frame drop from player)
+
+  double signal_to_view_delay = GetDisplaySignalToViewDelay();
   double frametime;
-
-  if (m_bDrain)
-    return;
-
   int fps = g_VideoReferenceClock.GetRefreshRate(&frametime);
   if(fps <= 0)
   {
     /* smooth video not enabled */
-    CDVDClock::WaitAbsoluteClock(presenttime * DVD_TIME_BASE);
+    // estimate half a frametime to get to front buffer on average
+    CDVDClock::WaitAbsoluteClock((presenttime - (0.5 * frametime) - signal_to_view_delay) * DVD_TIME_BASE);
     return;
   }
 
-  bool ismaster = CDVDClock::IsMasterClock();
-
-  //the videoreferenceclock updates its clock on every vertical blank
-  //we want every frame's presenttime to end up in the middle of two vblanks
-  //if CDVDPlayerAudio is the master clock, we add a correction to the presenttime
-  if (ismaster)
-    presenttime += m_presentcorr * frametime;
-
-  double clock     = CDVDClock::WaitAbsoluteClock(presenttime * DVD_TIME_BASE) / DVD_TIME_BASE;
-  double target    = 0.5;
-  double error     = ( clock - presenttime ) / frametime - target;
-
-  m_presenterr     = error;
-
-  // correct error so it targets the closest vblank
-  error = wrap(error, 0.0 - target, 1.0 - target);
-
-  // scale the error used for correction,
-  // based on how much buffer we have on
-  // that side of the target
-  if(error > 0)
-    error /= 2.0 * (1.0 - target);
-  if(error < 0)
-    error /= 2.0 * (0.0 + target);
-
-  //save error in the buffer
-  m_errorindex = (m_errorindex + 1) % ERRORBUFFSIZE;
-  m_errorbuff[m_errorindex] = error;
-
-  //get the average error from the buffer
-  double avgerror = 0.0;
-  for (int i = 0; i < ERRORBUFFSIZE; i++)
-    avgerror += m_errorbuff[i];
-
-  avgerror /= ERRORBUFFSIZE;
-
-
-  //if CDVDPlayerAudio is not the master clock, we change the clock speed slightly
-  //to make every frame's presenttime end up in the middle of two vblanks
-  if (!ismaster)
+  bool resetbuff = false;
+  // when asked to reset our wait correction position state by player do so (due to known video sync position adjustment)
+  if (reset_corr)
   {
-    //integral correction, clamp to -0.5:0.5 range
-    m_presentcorr = std::max(std::min(m_presentcorr + avgerror * 0.01, 0.1), -0.1);
-    g_VideoReferenceClock.SetFineAdjust(1.0 - avgerror * 0.01 - m_presentcorr * 0.01);
+    m_presentcorr = 0.0;
+    resetbuff = true;
+  }
+  double presentcorr = m_presentcorr;
+
+  // fraction of frame ahead of targetwaitclock that the abs dvd clock should ideally be after our wait has completed
+  double targetpos = 0.5;
+  // target wait should be earlier by 1 frametime to get to frontbuffer + targetpos as well as signal to view delay
+  // and finally corrected by our wait clock tracking correction factor (m_presentcorr)
+  double targetwaitclock = presenttime - ((1 + targetpos) * frametime) - signal_to_view_delay;
+  targetwaitclock += presentcorr * frametime;  //adjust by our accumulated correction
+
+  // we now wait and wish our clock tick result to be targetpos out from target wait
+  double clock = CDVDClock::WaitAbsoluteClock(targetwaitclock * DVD_TIME_BASE) / DVD_TIME_BASE;
+  CLog::Log(LOGDEBUG, "ASB: CRenderManager::WaitPresentTime wait complete targetwaitclock: %f secs presenttime: %f frametime: %f signal_to_view_delay: %f clock: %f now: %"PRId64"", targetwaitclock, presenttime, frametime, signal_to_view_delay, clock, CurrentHostCounter());
+
+  // error is number(fraction) of frames out we are from where we were trying to correct to
+  double error = (clock - targetwaitclock) / frametime - targetpos;
+  // abserror is number(fraction) of frames out we are from where we shuuld be without correction factor
+  double abserror = error + presentcorr;
+  m_presenterr = error;
+
+  // we should be careful not too overshoot if we are getting close to a wrap boundary to avoid
+  // swinging back and forward unnecessarily:
+
+  // if wrapped abserror value changes by more 10% of frame from last then reset presentcorr and avgs
+  // we should wrap error combine with m_presentcorr and if abs value greater 90% targetpos but 
+  //   less than 105% move presentcorr by 1% avg error
+  // else move by 5% - reset avg
+  // if presentcorr approx 0 and error-wrapped approx abs(0.5) then steer by 10% in 
+  //   that direction to get it quickly away from beat spot
+  // if presentcorr + error-wrapped > 0.55 (we are required to make too large a forward correction) 
+  //   then reset presentcorr and avgs
+  // if presentcorr + error-wrapped < -0.55 targetpos then wrap presentcorr to 0.5 targetpos 
+  //   to avoid any issues
+
+  error = wrap(error, 0.0 - targetpos, 1.0 - targetpos);
+  abserror = wrap(abserror, 0.0 - targetpos, 1.0 - targetpos);
+  if ( (m_prevwaitabserror != DVD_NOPTS_VALUE && (fabs(abserror - m_prevwaitabserror) > 0.1)) || 
+       (presentcorr > 0.55) || (fabs(presentcorr + error) > 0.6) )
+  {
+     // unstable fluctuations in position (implying no point in trying to target), 
+     // or targetting too far forward a correction,
+     // or simply too large the current error target...then reset presentcorr and error buffer
+     // note: allowing the small forward correction overshoot helps to avoid hanging around 
+     // the 0.5 beat zone for long enough to reduce the chances of targetting forward then
+     // backward with high frequency.
+     presentcorr = 0.0;
+     m_prevwaitabserror = DVD_NOPTS_VALUE; //avoid next iteration using the prevabserror value
+     resetbuff = true;
+  }
+  else if (presentcorr < -0.55)
+  {
+     // targetting to far backward, force it to next vblank at next iteration by wrapping
+     // presentcorr straight to 0.5 and reset error buffer
+     // - this avoids travelling through the troublesome beat zone
+     presentcorr = 0.5;
+     m_prevwaitabserror = DVD_NOPTS_VALUE; //avoid next iteration using the prevabserror value
+     resetbuff = true;
+  }
+  else if (fabs(presentcorr) < 0.05 && fabs(error) > 0.45)
+  {
+     // strongly target in error direction to move clear of beat zone quickly initially
+     presentcorr += 0.1 * error;
+  }
+  else if (fabs(presentcorr + error) > 0.45)
+  {
+     // we have drifted close to the beat zone so now we try to drift carefully so that 
+     // we only wrap when surely required this is done with 1% adjustments of recent 
+     // error average save error in the buffer
+     m_errorindex = (m_errorindex + 1) % ERRORBUFFSIZE;
+     m_errorbuff[m_errorindex] = error;
+
+     //get the average error from the buffer
+     double avgerror = 0.0;
+     for (int i = 0; i < ERRORBUFFSIZE; i++)
+           avgerror += m_errorbuff[i];
+     avgerror /= ERRORBUFFSIZE;
+
+     presentcorr = presentcorr + avgerror * 0.01;
   }
   else
   {
-    //integral correction, wrap to -0.5:0.5 range
-    m_presentcorr = wrap(m_presentcorr + avgerror * 0.01, target - 1.0, target);
-    g_VideoReferenceClock.SetFineAdjust(1.0);
+     // adjust by 5% of error directly
+     resetbuff = true; //adjustment is large enough to warrant clearing averages
+     presentcorr = presentcorr + (error * 0.05);
   }
-
-  //printf("%f %f % 2.0f%% % f % f\n", presenttime, clock, m_presentcorr * 100, error, error_org);
+  if (resetbuff)
+  {
+     memset(m_errorbuff, 0, sizeof(m_errorbuff));
+  }
+  // store new value back in global for access by codec info
+  m_presentcorr = presentcorr;
 }
 
 CStdString CXBMCRenderManager::GetVSyncState()
 {
-  double avgerror = 0.0;
-  for (int i = 0; i < ERRORBUFFSIZE; i++)
-    avgerror += m_errorbuff[i];
-  avgerror /= ERRORBUFFSIZE;
-
   CStdString state;
-  state.Format("sync:%+3d%% avg:%3d%% error:%2d%%"
+  state.Format("sh:%i lo:%i sync:%+3d%% err:%2d%%"
+              , m_shortdisplaycount
+              , m_longdisplaycount
               ,     MathUtils::round_int(m_presentcorr * 100)
-              ,     MathUtils::round_int(avgerror      * 100)
               , abs(MathUtils::round_int(m_presenterr  * 100)));
   return state;
 }
@@ -291,9 +345,12 @@ void CXBMCRenderManager::RenderUpdate(bool clear, DWORD flags, DWORD alpha)
     if (m_presentstep == PRESENT_IDLE)
       CheckNextBuffer();
 
+    //m_overlays.FlipRender();
+
     if(m_presentstep == PRESENT_FLIP)
     {
-      m_overlays.Flip();
+CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::RenderUpdate PRESENT_FLIP about to notify m_pRenderer m_renderinfo.framepts: %f m_renderinfo.frameplayspeed: %i m_renderinfo.frameId: %i", m_renderinfo.framepts, m_renderinfo.frameplayspeed, m_renderinfo.frameId);
+      m_overlays.FlipRender();
       m_pRenderer->FlipPage(m_presentsource);
       m_presentstep = PRESENT_FRAME;
       m_presentevent.Set();
@@ -310,18 +367,49 @@ void CXBMCRenderManager::RenderUpdate(bool clear, DWORD flags, DWORD alpha)
 
   m_overlays.Render();
 
+  UpdatePostRenderClock();
+  UpdatePreFlipClock();
+
   m_presentstep = PRESENT_IDLE;
   m_presentevent.Set();
+
 }
 
 unsigned int CXBMCRenderManager::PreInit()
 {
   CRetakeLock<CExclusiveLock> lock(m_sharedSection);
 
+  CLog::Log(LOGNOTICE, "------------------------- preinit");
   m_presentcorr = 0.0;
   m_presenterr  = 0.0;
   m_errorindex  = 0;
   memset(m_errorbuff, 0, sizeof(m_errorbuff));
+  m_prevwaitabserror = 0.0;
+
+  m_videoPicId = 0;
+  m_renderinfo.framedur = 0.0;
+  m_renderinfo.frameId = -1;
+  m_renderinfo.framepts = DVD_NOPTS_VALUE;
+  m_renderinfo.frameplayspeed = 0;
+  for (int i = 0; i <= NUM_DISPLAYINFOBUF; i++)
+  {
+     m_displayinfo[i].framedur = 0.0;
+     m_displayinfo[i].framepts = DVD_NOPTS_VALUE;
+     m_displayinfo[i].frameId = -1;
+     m_displayinfo[i].frameplayspeed = 0;
+     m_displayinfo[i].frameclock = DVD_NOPTS_VALUE;
+     m_displayinfo[i].refreshdur = 0.0;
+  }
+  m_refdisplayinfo.framepts = DVD_NOPTS_VALUE;
+  m_refdisplayinfo.frameclock = DVD_NOPTS_VALUE;
+  m_refdisplayinfo.frameplayspeed = 0;
+
+  m_flipasync = true; 
+  m_preflipclock = DVD_NOPTS_VALUE;
+  m_postflipclock = DVD_NOPTS_VALUE;
+  m_postrenderclock = DVD_NOPTS_VALUE;
+  m_shortdisplaycount = 0;
+  m_longdisplaycount = 0;
 
   m_bIsStarted = false;
   m_bPauseDrawing = false;
@@ -594,6 +682,7 @@ float CXBMCRenderManager::GetMaximumFPS()
 
 void CXBMCRenderManager::Present()
 {
+CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::Present About to retake lock  m_renderinfo.framepts: %f m_renderinfo.frameplayspeed: %i m_renderinfo.frameId: %i now: %"PRId64"", m_renderinfo.framepts, m_renderinfo.frameplayspeed, m_renderinfo.frameId, CurrentHostCounter());
   { CRetakeLock<CExclusiveLock> lock(m_sharedSection);
     if (!m_pRenderer)
       return;
@@ -604,8 +693,12 @@ void CXBMCRenderManager::Present()
     if(m_presentstep == PRESENT_FLIP)
     {
       // overlays has to be flipped if picture flips
-      // in order to remove odl ones
-      m_overlays.Flip();
+      // in order to remove old ones
+//      m_overlays.Flip();
+//      m_requestOverlayFlip = false;
+
+CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::Present PRESENT_FLIP about to notify m_pRenderer m_renderinfo.framepts: %f m_renderinfo.frameplayspeed: %i m_renderinfo.frameId: %i now: %"PRId64"", m_renderinfo.framepts, m_renderinfo.frameplayspeed, m_renderinfo.frameId, CurrentHostCounter());
+      m_overlays.FlipRender();
       m_requestOverlayFlip = false;
       m_pRenderer->FlipPage(m_presentsource);
       m_presentstep = PRESENT_FRAME;
@@ -614,7 +707,7 @@ void CXBMCRenderManager::Present()
     // continue flipping overlays for still frames
     else if (m_requestOverlayFlip)
     {
-      m_overlays.Flip();
+      m_overlays.FlipRender();
       m_requestOverlayFlip = false;
     }
   }
@@ -637,9 +730,12 @@ void CXBMCRenderManager::Present()
   m_overlays.Render();
 
   lock.Leave();
+
+  UpdatePostRenderClock();
   /* wait for this present to be valid */
   if(g_graphicsContext.IsFullScreenVideo())
     WaitPresentTime(m_presenttime);
+  UpdatePreFlipClock();
 
 //  m_presentevent.Set();
 }
@@ -731,9 +827,9 @@ void CXBMCRenderManager::UpdateResolution()
 }
 
 
-//int CXBMCRenderManager::AddVideoPicture(DVDVideoPicture& pic, int source, double presenttime, EFIELDSYNC sync, CDVDClock *clock, bool &late)
-int CXBMCRenderManager::AddVideoPicture(DVDVideoPicture& pic, int source, double pts, double presenttime, EFIELDSYNC sync, int playspeed)
+int CXBMCRenderManager::AddVideoPicture(DVDVideoPicture& pic, double pts, double presenttime, int playspeed, bool vclockresync /* = false */)
 {
+CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::AddVideoPicture about to CSharedLock lock(m_sharedSection) pts: %f now: %"PRId64"", pts, CurrentHostCounter());
   CSharedLock lock(m_sharedSection);
   if (!m_pRenderer)
     return -1;
@@ -742,20 +838,33 @@ int CXBMCRenderManager::AddVideoPicture(DVDVideoPicture& pic, int source, double
   if(m_pRenderer->AddVideoPicture(&pic))
     return 1;
 #endif
-//  m_pClock = clock;
 
+CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::AddVideoPicture abouto to m_pRenderer->FlipFreeBuffer() pts: %f now: %"PRId64"", pts, CurrentHostCounter());
   YV12Image image;
-  source = m_pRenderer->GetNextFreeBufferIndex();
+
+  int source = m_pRenderer->FlipFreeBuffer();
   if (source < 0)
   {
     CLog::Log(LOGERROR, "CXBMCRenderManager::AddVideoPicture - error getting next buffer");
     return -1;
   }
 
+CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::AddVideoPicture about to m_pRenderer->GetImage() pts: %f now: %"PRId64"", pts, CurrentHostCounter());
   int index = m_pRenderer->GetImage(&image, source);
 
   if(index < 0)
     return index;
+
+  double framedur = pic.iDuration;
+  // set fieldsync if picture is interlaced
+  EFIELDSYNC mDisplayField = FS_NONE;
+  if( pic.iFlags & DVP_FLAG_INTERLACED )
+  {
+    if( pic.iFlags & DVP_FLAG_TOP_FIELD_FIRST )
+      mDisplayField = FS_TOP;
+    else
+      mDisplayField = FS_BOT;
+  }
 
   if(pic.format == DVDVideoPicture::FMT_YUV420P)
   {
@@ -793,24 +902,23 @@ int CXBMCRenderManager::AddVideoPicture(DVDVideoPicture& pic, int source, double
     m_pRenderer->AddProcessor(*pic.vaapi);
 #endif
 
-  // set pts and sync
+  // set pts and sync etc
   *image.pPresenttime = presenttime;
   *image.pPts = pts;
+  *image.pId = m_videoPicId++;
   *image.pPlaySpeed = playspeed;
-  *image.pSync = sync;
+  *image.pFrameDur = framedur;
+  *image.pVClockResync = vclockresync;
+  *image.pSync = mDisplayField;
 
+CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::AddVideoPicture about to m_pRenderer->Upload() pts: %f now: %"PRId64"", pts, CurrentHostCounter());
   // upload texture
   m_pRenderer->Upload(index);
+CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::AddVideoPicture about to m_pRenderer->ReleaseImage() pts: %f now: %"PRId64"", pts, CurrentHostCounter());
 
   m_pRenderer->ReleaseImage(index, false);
 
-//  // signal new frame to application
-//  g_application.NewFrame();
-
-  // signal lateness to player
-//  late = m_late ? true : false;
-//  m_late = false;
-
+CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::AddVideoPicture finished pts: %f now: %"PRId64"", pts, CurrentHostCounter());
   return index;
 }
 
@@ -820,11 +928,11 @@ int CXBMCRenderManager::WaitForBuffer(volatile bool& bStop)
   if (!m_pRenderer)
     return -1;
 
-  double timeout = GetPresentTime() + 0.05;
+  double timeout = GetPresentTime() + 1.0; //wait up to a second as this is our slowest allowed output rate
   while(!m_pRenderer->HasFreeBuffer() && !bStop)
   {
     lock.Leave();
-    m_flipEvent.WaitMSec(50);
+    m_flipEvent.WaitMSec(5);
     if(GetPresentTime() > timeout && !bStop)
     {
 //      m_pRenderer->LogBuffers();
@@ -836,46 +944,270 @@ int CXBMCRenderManager::WaitForBuffer(volatile bool& bStop)
   return 1;
 }
 
-void CXBMCRenderManager::NotifyFlip()
+void CXBMCRenderManager::UpdateDisplayInfo()
+{
+  // first update our pts tracking:
+  // so assuming for now the following state:  
+  //    async flipping (eg no gLfinish())
+  //    && using vsync 
+  //    && video reference clock 
+  //    && not too high refresh rate eg vb duration > ~8ms
+  // then
+  //    if postflipclock - preflipclock >= 6ms && postflipclock > vb_after_preflipclock 
+  //         assume displayclock == vb_after_postflipclock
+  //    if postflipclock < vb_after_preflipclock && vb_after_preflipclock - postrenderclock > min(0.5 * vb_duration, 8ms)
+  //         assume displayclock == vb_after_postflipclock
+  //    else estimate_displayclock only as say vb_after_postflipclock 
+  //         (to be used for estimating display pts and only if we have not updated displayclock recently etc)
+  // TODO: async mode - will need to adjust the functions down to PresentRenderImpl() to pass this through 
+  // TODO: ignore for now for simplicity non-fullscreen consideration as accuracy probably not so important...
+  //       but what about non full screen root (windowed mode)?
+  
+  if (m_preflipclock == DVD_NOPTS_VALUE || m_postflipclock == DVD_NOPTS_VALUE || m_postrenderclock == DVD_NOPTS_VALUE)
+    return;
+
+  bool bFrameChange = false;
+  if (m_renderinfo.frameId != m_displayinfo[0].frameId)
+  {
+     bFrameChange = true;
+  }
+
+  // get the vblank clock tick time following m_postflipclock value
+  double clocktickafterpostflipclock = CDVDClock::GetNextAbsoluteClockTick(m_postflipclock * DVD_TIME_BASE) / DVD_TIME_BASE;
+  double signal_to_view_delay = GetDisplaySignalToViewDelay(); 
+  double displayrefreshdur;
+  int fps = g_VideoReferenceClock.GetRefreshRate(&displayrefreshdur); //fps == 0 or less assume no vblank based reference clock
+
+  CExclusiveLock lock(m_sharedDisplayInfoSection); //now we can update the info variables.
+      
+  m_flipasync = true; //TODO: get application to tell render manager if we are async or not
+  if (bFrameChange)
+  {
+     for (int i = NUM_DISPLAYINFOBUF - 1; i > 0; i--)
+     {
+         m_displayinfo[i].frameclock = m_displayinfo[i-1].frameclock;
+         m_displayinfo[i].frameplayspeed = m_displayinfo[i-1].frameplayspeed;
+         m_displayinfo[i].framedur = m_displayinfo[i-1].framedur;
+         m_displayinfo[i].refreshdur = m_displayinfo[i-1].refreshdur;
+         m_displayinfo[i].framepts = m_displayinfo[i-1].framepts;
+         m_displayinfo[i].frameId = m_displayinfo[i-1].frameId;
+     }
+  }
+  m_displayinfo[0].framepts = m_renderinfo.framepts;
+  m_displayinfo[0].frameId = m_renderinfo.frameId;
+  m_displayinfo[0].frameplayspeed = m_renderinfo.frameplayspeed;
+  m_displayinfo[0].framedur = m_renderinfo.framedur;  
+  m_displayinfo[0].refreshdur = displayrefreshdur;
+
+  // now we need to establish values for m_displayinfo[0].frameclock, and if 
+  // possible m_refdisplayinfo.frameclock, m_refdisplayinfo.frameplayspeed, m_refdisplayinfo.frameplaypts 
+  if (fps > 0 && displayrefreshdur > 0.001) //vblank based smooth video and plausible refresh duration
+  {
+     if (m_flipasync) 
+     {
+        // 6ms overrun across a vblank to signify it must have waited for a previous flip to complete
+        double flipclockoverrundur = 0.006;
+        // min of {8ms, half tick duration} safe allowance for outstanding render opengl 
+        // commands to complete before a vblank
+        double renderallowance = std::min(0.008, 0.5 * displayrefreshdur);
+
+        // the vblank clock tick time following m_preflipclock value 
+        double clocktickafterpreflipclock = clocktickafterpostflipclock;
+        while (clocktickafterpreflipclock > m_preflipclock)
+               clocktickafterpreflipclock -= displayrefreshdur;  //reduce to just before
+        clocktickafterpreflipclock = clocktickafterpreflipclock + displayrefreshdur;  //finally take it forward one tick
+        // standard estimate is that all is well and frame will be on front buffer at vblank after flip
+        m_displayinfo[0].frameclock = clocktickafterpostflipclock + signal_to_view_delay;
+ 
+        if ( (m_postflipclock > clocktickafterpreflipclock && 
+             clocktickafterpostflipclock - clocktickafterpreflipclock > flipclockoverrundur) ||
+                (m_postflipclock < clocktickafterpreflipclock && 
+                 clocktickafterpreflipclock - m_postrenderclock > renderallowance) )
+        {
+           // the clock estimate is considered reference quality
+           m_refdisplayinfo.frameclock = m_displayinfo[0].frameclock;
+           m_refdisplayinfo.framepts = m_displayinfo[0].framepts;
+           m_refdisplayinfo.frameplayspeed = m_displayinfo[0].frameplayspeed;
+        }
+//  CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::UpdateDisplayInfo 4 m_preflipclock: %f m_postflipclock: %f m_postrenderclock: %f m_renderinfo.framepts: %f m_displayinfo[0].framepts: %f m_renderinfo.frameplayspeed: %i m_refdisplayinfo.framepts: %f clocktickafterpostflipclock: %f signal_to_view_delay: %f", m_preflipclock, m_postflipclock, m_postrenderclock, m_renderinfo.framepts, m_displayinfo[0].framepts, m_renderinfo.frameplayspeed, m_refdisplayinfo.framepts, clocktickafterpostflipclock, signal_to_view_delay);
+     }
+     else if (!m_flipasync)
+     {
+        // just assume the vblank before postflip clock is displayclock
+        m_refdisplayinfo.frameclock = clocktickafterpostflipclock - displayrefreshdur + signal_to_view_delay;
+        m_refdisplayinfo.framepts = m_displayinfo[0].framepts;
+        m_refdisplayinfo.frameplayspeed = m_displayinfo[0].frameplayspeed;
+        m_displayinfo[0].frameclock = m_refdisplayinfo.frameclock;          
+     }
+  }
+  else
+  {
+     // just estimate this from postflipclock + half display duration + signal to view delay
+     m_displayinfo[0].frameclock = m_postflipclock + (displayrefreshdur / 2) ;
+  }
+
+  // if we didn't change speed or duration, and at normal speed and using smooth video then 
+  // estimate if we got long/short display frames for codec info
+  int frameplayspeed1 = m_displayinfo[1].frameplayspeed;
+  int frameplayspeed2 = m_displayinfo[2].frameplayspeed;
+  int frameplayspeed3 = m_displayinfo[3].frameplayspeed;
+  double displayframedur1 = m_displayinfo[1].framedur;
+  double displayframedur2 = m_displayinfo[2].framedur;
+  double displayframedur3 = m_displayinfo[3].framedur;
+  double displayframeclock1 = m_displayinfo[1].frameclock;
+  double displayframeclock2 = m_displayinfo[2].frameclock;
+  double displayframeclock3 = m_displayinfo[3].frameclock;
+  if (bFrameChange &&
+      frameplayspeed1 == frameplayspeed2 && 
+      frameplayspeed1 == DVD_PLAYSPEED_NORMAL && 
+      displayframeclock1 != DVD_NOPTS_VALUE && displayframeclock2 != DVD_NOPTS_VALUE &&
+      displayrefreshdur != 0.0 && fps > 0 &&
+      displayframedur1 == displayframedur2)
+  {  
+     //the elasped clock time estimate between previous pts changes
+     double displayclockelapsed1 = displayframeclock1 - displayframeclock2;
+     double displayclockelapsed2 = displayframeclock1 - displayframeclock3;
+     if (displayclockelapsed1 > displayframedur1 + 0.5 * displayrefreshdur)
+        m_longdisplaycount++;
+     else if (displayclockelapsed1 < displayframedur1 - 0.5 * displayrefreshdur && 
+              displayclockelapsed1 > 0.9 * displayrefreshdur)
+        m_shortdisplaycount++;
+     else if (displayframeclock3 != DVD_NOPTS_VALUE && 
+              displayframedur1 == displayframedur3 && 
+              frameplayspeed1 == frameplayspeed3)
+     {
+        // we can look to tweak our estimates if we notice a shorter than refreshdur elapse 
+        // when total elapse over 2 looks normal (we can assume we previously counted as a long
+        // incorrectly)
+        if (displayclockelapsed2 > (displayframedur1 + displayframedur2) * 0.95 && 
+              displayclockelapsed2 < (displayframedur1 + displayframedur2) * 1.05 &&
+              displayclockelapsed1 <= 0.9 * displayrefreshdur)
+           m_longdisplaycount--;
+     }
+  }
+}
+
+void CXBMCRenderManager::NotifyDisplayFlip()
 {
   if (!m_pRenderer)
     return;
 
+  UpdatePostFlipClock();
+  UpdateDisplayInfo();
+CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::NotifyDisplayFlip about to notify m_pRenderer m_renderinfo.framepts: %f m_renderinfo.frameplayspeed: %i m_renderinfo.frameId: %i now: %"PRId64"", m_renderinfo.framepts, m_renderinfo.frameplayspeed, m_renderinfo.frameId, CurrentHostCounter());
+
   CRetakeLock<CExclusiveLock> lock(m_sharedSection);
 
-  m_pRenderer->NotifyFlip();
+  m_pRenderer->NotifyDisplayFlip();
+  m_overlays.NotifyDisplayFlip();
   m_flipEvent.Set();
+CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::NotifyDisplayFlip done m_pRenderer m_renderinfo.framepts: %f m_renderinfo.frameplayspeed: %i m_renderinfo.frameId: %i now: %"PRId64"", m_renderinfo.framepts, m_renderinfo.frameplayspeed, m_renderinfo.frameId, CurrentHostCounter());
 }
 
+void CXBMCRenderManager::UpdatePostRenderClock()
+{
+  m_postrenderclock = CDVDClock::GetAbsoluteClock(true) / DVD_TIME_BASE; 
+} 
+
+void CXBMCRenderManager::UpdatePreFlipClock()
+{
+  m_preflipclock = CDVDClock::GetAbsoluteClock(true) / DVD_TIME_BASE;
+} 
+ 
+void CXBMCRenderManager::UpdatePostFlipClock()
+{
+  m_postflipclock = CDVDClock::GetAbsoluteClock(true) / DVD_TIME_BASE;
+}  
+
+double CXBMCRenderManager::GetDisplaySignalToViewDelay()
+{
+  // the delay between when the display signal begins transmitting to when it 
+  // is considered viewed/perceived.
+  // TODO: function to get from advanced settings reflecting the physical display 
+  //       device and video signal method and allowing multiples of vblank duration
+  //       eg possibly half vb is good estimate for analog display, but with digital 1 vb + internal processing delay)
+
+  // for now just go with half refresh duration
+  return (m_displayinfo[0].refreshdur / 2);
+}
+
+double CXBMCRenderManager::GetDisplayDelay()
+{
+  // estimate of clock time to take an output frame, render it then deliver it to be visible on display
+  // This function allows the player to prepare relative clock-to-pts delta at initial resync
+
+  // - assume 50ms for render + signal to view delay
+  return 0.05 + GetDisplaySignalToViewDelay();
+}
+
+double CXBMCRenderManager::GetCurrentDisplayPts(int& playspeed)
+{
+  // return pts extrapolated in microsecnds 
+  double samplepts;
+  double sampleclock;
+  //double clock = CDVDClock::GetAbsoluteClock(true) / DVD_TIME_BASE;
+  double clock = GetPresentTime();
+  CSharedLock lock(m_sharedDisplayInfoSection);
+  playspeed = m_displayinfo[0].frameplayspeed;
+  if (m_displayinfo[0].framepts == DVD_NOPTS_VALUE)
+     return DVD_NOPTS_VALUE; //tell caller we don't know
+
+  //use estimates if available if no reference value OR playspeed has changed OR reference value is more than 2 seconds old
+  if (m_refdisplayinfo.frameclock == DVD_NOPTS_VALUE || 
+      playspeed != m_refdisplayinfo.frameplayspeed || clock - m_refdisplayinfo.frameclock > 2.0)
+  {        
+     samplepts = m_displayinfo[0].framepts;
+     sampleclock = m_displayinfo[0].frameclock;
+  }
+  else
+  {
+     samplepts = m_refdisplayinfo.framepts;
+     sampleclock = m_refdisplayinfo.frameclock;
+  }
+
+  if ( (playspeed == DVD_PLAYSPEED_PAUSE && clock >= m_displayinfo[0].frameclock) ||
+       (clock >= m_displayinfo[0].frameclock + m_displayinfo[0].refreshdur) ) 
+     return m_displayinfo[0].framepts;
+  else 
+  {
+     double interpolatepts = samplepts + ((double)(playspeed / DVD_PLAYSPEED_NORMAL) * (clock - sampleclock) * DVD_TIME_BASE);
+//  CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::GetCurrentDisplayPts clock: %f m_displayinfo[0].frameclock: %f m_displayinfo[0].framepts: %f m_displayinfo[0].refreshdur: %f m_refdisplayinfo.frameclock: %f sampleclock: %f samplepts: %f interpolatepts: %f", clock, m_displayinfo[0].frameclock, m_displayinfo[0].framepts, m_displayinfo[0].refreshdur, m_refdisplayinfo.frameclock, sampleclock, samplepts, interpolatepts);
+     return interpolatepts;
+  }
+}
+
+// despite the name this function will also prepare state for render flip too
 void CXBMCRenderManager::CheckNextBuffer()
 {
-//  if(!m_pRenderer || !m_pClock) return;
   if(!m_pRenderer) return;
 
+CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::CheckNextBuffer begin m_renderinfo.framepts: %f m_renderinfo.frameplayspeed: %i m_renderinfo.frameId: %i now: %"PRId64"", m_renderinfo.framepts, m_renderinfo.frameplayspeed, m_renderinfo.frameId, CurrentHostCounter());
   YV12Image image;
-  int source = m_pRenderer->GetCurrentBufferIndex();
+  int source = m_pRenderer->GetNextRenderBufferIndex();
   if (source == -1)
     return;
 
-  int index = m_pRenderer->GetImage(&image, source);
+  int index = m_pRenderer->GetImage(&image, source, true);
+  if(index < 0)
+    return;
 
-  // calculate render time
-//  double iPlayingClock, iCurrentClock, iSleepTime, iPresentTime;
-//  iPlayingClock = m_pClock->GetClock(iCurrentClock, false);
-//  iSleepTime = *image.pPresenttime - iPlayingClock;
-//  iPresentTime = iCurrentClock + iSleepTime;
+  double presenttime = *image.pPresenttime/DVD_TIME_BASE;
+  double clocktime = GetPresentTime();
+  if(presenttime - clocktime > MAXPRESENTDELAY)
+    presenttime = clocktime + MAXPRESENTDELAY;
 
-//  if (iSleepTime <= 0)
-//    m_late = true;
+  m_renderinfo.framepts = *image.pPts; //from image
+  m_renderinfo.frameId = *image.pId; //from image
+  m_renderinfo.frameplayspeed = *image.pPlaySpeed; //from image
+  m_renderinfo.framedur = *image.pFrameDur/DVD_TIME_BASE; //from image
+CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::CheckNextBuffer m_renderinfo.framepts: %f m_renderinfo.frameplayspeed: %i m_renderinfo.frameId: %i now: %"PRId64"", m_renderinfo.framepts, m_renderinfo.frameplayspeed, m_renderinfo.frameId, CurrentHostCounter());
+  m_vclockresync = *image.pVClockResync;
 
-  double timestamp = *image.pPresenttime/DVD_TIME_BASE;
-  if(timestamp - GetPresentTime() > MAXPRESENTDELAY)
-    timestamp =  GetPresentTime() + MAXPRESENTDELAY;
-
+//TODO: should we not do the below flip request step in even if late in non-fullscreen mode?
   if(g_graphicsContext.IsFullScreenVideo()
-      || timestamp <= GetPresentTime())
+      || presenttime <= clocktime)
   {
-    m_presenttime  = timestamp;
+    m_presenttime  = presenttime;
     m_presentfield = *image.pSync;
     m_presentstep  = PRESENT_FLIP;
     m_presentsource = -1;
@@ -925,7 +1257,7 @@ bool CXBMCRenderManager::Drain()
   if(!m_pRenderer)
     return true;
 
-  int index = m_pRenderer->GetCurrentBufferIndex();
+  int index = m_pRenderer->GetNextRenderBufferIndex();
   if (index == -1)
     return true;
 
