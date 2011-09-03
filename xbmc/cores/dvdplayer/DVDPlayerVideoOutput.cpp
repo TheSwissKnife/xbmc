@@ -248,7 +248,6 @@ void CDVDPlayerVideoOutput::Process()
         {
            FromOutputMessage fromMsg;
            fromMsg.iResult = iResult;
-CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideoOutput::Process m_fromOutputMessage.push fromMsg.iResult: %i", fromMsg.iResult);
            mLock.Enter();
            m_fromOutputMessage.push(fromMsg);
            mLock.Leave();
@@ -345,7 +344,6 @@ bool CDVDPlayerVideoOutput::GetPicture(bool drop /* = false*/)
     /* if frame has a pts (usually originiating from demux packet), use that */
     if(m_picture.pts != DVD_NOPTS_VALUE)
     {
-CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideoOutput::GetPicture picture.pts: %f", m_picture.pts);
       SetPts(m_picture.pts);
     }
 

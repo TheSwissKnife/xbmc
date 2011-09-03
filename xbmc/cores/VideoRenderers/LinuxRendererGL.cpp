@@ -269,7 +269,6 @@ bool CLinuxRendererGL::ValidateRenderTarget()
 
 bool CLinuxRendererGL::Configure(unsigned int width, unsigned int height, unsigned int d_width, unsigned int d_height, float fps, unsigned flags)
 {
-CLog::Log(LOGDEBUG, "ASB: CLinuxRendererGL::Configure");
   m_sourceWidth = width;
   m_sourceHeight = height;
   m_fps = fps;
