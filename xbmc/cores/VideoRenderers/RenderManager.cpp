@@ -873,7 +873,7 @@ CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::AddVideoPicture about to m_pRender
 CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::AddVideoPicture about to m_pRenderer->AddProcessor() pts: %f now: %"PRId64"", pts, CurrentHostCounter());
         m_pRenderer->AddProcessor(pic.vdpau);
 CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::AddVideoPicture about to pic.vdpau->Present() pts: %f now: %"PRId64"", pts, CurrentHostCounter());
-        pic.vdpau->PreBindAllPixmaps();
+//        pic.vdpau->PreBindAllPixmaps();
         pic.vdpau->Present(index);
      }
   }

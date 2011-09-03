@@ -55,13 +55,13 @@ CVDPAU::Desc decoder_profiles[] = {
 };
 const size_t decoder_profile_count = sizeof(decoder_profiles)/sizeof(CVDPAU::Desc);
 
-// TODO: This matrix is for BT709 only and is probably slighly out - derive from first principles instead
-static float studioCSC[3][4] =
-{
-    { 1.0f,        0.0f, 1.57480000f,-0.78740000f},
-    { 1.0f,-0.18737736f,-0.46813736f, 0.32775736f},
-    { 1.0f, 1.85556000f,        0.0f,-0.92780000f}
-};
+//// TODO: This matrix is for BT709 only and is probably slighly out - derive from first principles instead
+//static float studioCSC[3][4] =
+//{
+//    { 1.0f,        0.0f, 1.57480000f,-0.78740000f},
+//    { 1.0f,-0.18737736f,-0.46813736f, 0.32775736f},
+//    { 1.0f, 1.85556000f,        0.0f,-0.92780000f}
+//};
 static float studioCSCKCoeffs601[3] = {0.299, 0.587, 0.114};  //BT601 {Kr, Kg, Kb}
 static float studioCSCKCoeffs709[3] = {0.2126, 0.7152, 0.0722};  //BT709 {Kr, Kg, Kb}
 
@@ -418,7 +418,10 @@ int CVDPAU::PreBindAllPixmaps()
       return 0;
   }
 
-  GLenum textureTarget = GL_TEXTURE_2D; // temporary hack...should really pass this as input, or determine correct value eg GL_TEXTURE_RECTANGLE_ARB
+  GLenum textureTarget = GL_TEXTURE_2D;  //assume 2D for now
+  //if (glGet(GL_TEXTURE_RECTANGLE_ARB))
+  //   textureTarget = GL_TEXTURE_RECTANGLE_ARB;
+
   glEnable(textureTarget); 
   OutputPicture *outPic;
   for (int i = 0; i < NUM_OUTPUT_PICS; i++)
@@ -441,7 +444,7 @@ int CVDPAU::PreBindAllPixmaps()
 
       glBindTexture(textureTarget, 0);
   }
-  glDisable(textureTarget); 
+  //glDisable(textureTarget); 
   m_preBindPixmapsDone = true;
   return 1;
 }
@@ -465,13 +468,11 @@ int CVDPAU::SetTexture(int plane, int field, int flipBufferIdx)
   }
   else
   {
+    PreBindAllPixmaps();
     if (m_flipBuffer[flipBufferIdx])
     {
       if (!glIsTexture(m_flipBuffer[flipBufferIdx]->texture[0]))
-{
-CLog::Log(LOGDEBUG,"ASB: CVDPAU SetTexture about to glGenTextures flipBufferIdx: %i m_flipBuffer[flipBufferIdx]: %u", flipBufferIdx, (unsigned int)m_flipBuffer[flipBufferIdx]);
         glGenTextures(1, m_flipBuffer[flipBufferIdx]->texture);
-}
       m_glTexture = m_flipBuffer[flipBufferIdx]->texture[0];
       return 0;
     }
@@ -503,11 +504,9 @@ void CVDPAU::BindPixmap(int flipBufferIdx)
     m_flipBuffer[flipBufferIdx]->bound = true;
     lock.Leave();
 int64_t prev = CurrentHostCounter();
-CLog::Log(LOGDEBUG,"ASB: CVDPAU BindPixmap about to glXBindTexImageEXT flipBufferIdx: %i bound: %i", flipBufferIdx, (int)bound);
     if (bound)
       glXReleaseTexImageEXT(m_Display, glPixmap, GLX_FRONT_LEFT_EXT);
     glXBindTexImageEXT(m_Display, glPixmap, GLX_FRONT_LEFT_EXT, NULL);
-CLog::Log(LOGDEBUG,"ASB: CVDPAU BindPixmap glXBindTexImageEXT done flipBufferIdx: %i m_flipBuffer[flipBufferIdx]: %u bound: %i DUR: %i", flipBufferIdx, (unsigned int)m_flipBuffer[flipBufferIdx], (int)bound, (int)(int64_t)((CurrentHostCounter() - prev)/1000000));
   }
   else CLog::Log(LOGERROR,"(VDPAU) BindPixmap called without valid pixmap");
 }
@@ -757,6 +756,7 @@ void CVDPAU::SetColor()
   VdpVideoMixerAttribute attributes[] = { VDP_VIDEO_MIXER_ATTRIBUTE_CSC_MATRIX };
   if (g_guiSettings.GetBool("videoplayer.vdpaustudiolevel"))
   {
+    float studioCSC[3][4];
     GenerateStudioCSCMatrix(colorStandard, studioCSC);
     void const * pm_CSCMatix[] = { &studioCSC };
     vdp_st = vdp_video_mixer_set_attribute_values(videoMixer, ARSIZE(attributes), attributes, pm_CSCMatix);
@@ -1281,7 +1281,7 @@ bool CVDPAU::ConfigOutputMethod(AVCodecContext *avctx, AVFrame *pFrame)
   // VS_INTERLACEMETHOD_VDPAU_BOB is the basic vdpau mixer de-interlacer
   // the HALF modes are only consider half the fields in the mixer
   // the AUTO mode enables de-interlacing if stream appears to be interlaced and enables temporal + temporal/spatial + ivtc-detection
-  // TODO: AUTO mode should also offer ability to control max level (BOB,TEMPORAL,SPATIAL,TEMPORTAL/SPATIAL etc too) and to switch off IVTC detection for auto
+  // TODO: AUTO mode should offer ability to switch off IVTC detection 
   // TODO: VS_INTERLACEMETHOD_VDPAU_INVERSE_TELECINE has a bad name so at least change in GUI string to show that it is temporal + ivtc detection
   if((method == VS_INTERLACEMETHOD_AUTO && m_binterlacedFrame)
      ||  method == VS_INTERLACEMETHOD_VDPAU_BOB
@@ -1326,15 +1326,13 @@ bool CVDPAU::ConfigOutputMethod(AVCodecContext *avctx, AVFrame *pFrame)
     // create mixer thread
     Create();
 
+    m_lastReportedReadyPic = NULL;
     totalAvailableOutputSurfaces = 0;
 
     int tmpMaxOutputSurfaces = NUM_OUTPUT_SURFACES;
     if (!g_guiSettings.GetBool("videoplayer.usevdpauinteroprgb"))
       tmpMaxOutputSurfaces = std::min(std::max(g_advancedSettings.m_videoVDPAUnumOutSurfacesPixmap, 1), NUM_OUTPUT_SURFACES);
 
-//ASB testing
-//    tmpMaxOutputSurfaces = 5;
-//TODO: remove line above
     // Creation of outputSurfaces
     for (int i = 0; i < tmpMaxOutputSurfaces; i++)
     {
@@ -1464,8 +1462,8 @@ bool CVDPAU::FiniOutputMethod()
       XFreePixmap(m_Display, m_allOutPic[i].pixmap);
       m_allOutPic[i].pixmap = 0;
     }
-    m_preBindPixmapsDone = false;
   }
+  m_preBindPixmapsDone = false;
 
   { CSingleLock lock(m_mixerSec);
     while (!m_mixerMessages.empty())
@@ -1708,20 +1706,22 @@ bool CVDPAU::QueueIsFull()
   }
   else
   {
+     // always ensure we have at least 1 free pic (ie assume full if only 1 freeOutPic) so that mixer cannot be starved 
      CSingleLock lockm(m_outPicSec);
      int msgs = m_mixerMessages.size();
      lockm.Leave();
      CSingleLock locku(m_outPicSec);
-     int notFreePics = m_outPicsNum - m_freeOutPic.size();
+     int iFreePics = m_freeOutPic.size();
+     int iNotFreePics = m_outPicsNum - iFreePics;
      locku.Leave();
 
      // assume for simplicity 2 output pics can come from one frame message if de-interlacing via mixer 
      // and that mixer-input can have 2 outstanding msgs inside it
      int msgsFactor = m_bVdpauDeinterlacing ? 2 : 1;
 
-     int estimatedPicQLength = notFreePics + (msgsFactor * (msgs + 2));
-//CLog::Log(LOGDEBUG,"ASB: CVDPAU::QueueIsFull estimatedPicQLength: %i, notFreePics: %i", estimatedPicQLength, notFreePics);
-     if (estimatedPicQLength >= MAX_PIC_Q_LENGTH)
+     int estimatedPicQLength = iNotFreePics + (msgsFactor * (msgs + 2));
+//CLog::Log(LOGDEBUG,"ASB: CVDPAU::QueueIsFull estimatedPicQLength: %i iNotFreePics: %i iFreePics: %i", estimatedPicQLength, iNotFreePics, iFreePics);
+     if (estimatedPicQLength >= MAX_PIC_Q_LENGTH || iFreePics < 2)
         return true; // buffers are full
   }
   return false;
@@ -1904,6 +1904,7 @@ CLog::Log(LOGDEBUG,"ASB: CVDPAU::Decode dropping usedPic at presentation stage")
        if ((!bDrain) && usedPics < targetUsed && (!QueueIsFull()))
           return VC_BUFFER;
 
+//CLog::Log(LOGDEBUG,"ASB: CVDPAU::Decode m_lastReportedReadyPic: %u usedPicFront: %u", (unsigned int)m_lastReportedReadyPic, (unsigned int)usedPicFront);
        if (m_lastReportedReadyPic != usedPicFront) //we have not reported about this usedPic yet
        {
           if (m_vdpauOutputMethod == OUTPUT_PIXMAP)
@@ -2021,7 +2022,6 @@ bool CVDPAU::GetPicture(AVCodecContext* avctx, AVFrame* frame, DVDVideoPicture* 
     if (m_usedOutPic.size() > 0)
     {
       m_presentPicture = m_usedOutPic.front();
-CLog::Log(LOGDEBUG,"ASB: CVDPAU GetPicture set m_presentPicture: %u", (unsigned int)m_presentPicture);
       m_usedOutPic.pop_front();
     }
     else
@@ -2173,7 +2173,7 @@ void CVDPAU::Present(int flipBufferIdx)
   }
 
   m_flipBuffer[flipBufferIdx] = m_presentPicture;
-CLog::Log(LOGDEBUG,"ASB: CVDPAU Present set flipbuffer flipBufferIdx: %i m_flipBuffer[flipBufferIdx]: %u", flipBufferIdx, (unsigned int)m_flipBuffer[flipBufferIdx]);
+//CLog::Log(LOGDEBUG,"ASB: CVDPAU Present set flipbuffer flipBufferIdx: %i m_flipBuffer[flipBufferIdx]: %u", flipBufferIdx, (unsigned int)m_flipBuffer[flipBufferIdx]);
   m_presentPicture = NULL;
 
 }
@@ -2435,6 +2435,7 @@ CLog::Log(LOGDEBUG,"ASB: CVDPAU::Process mixer drain requested");
           break;
         }
         outPicLock.Leave();
+//CLog::Log(LOGDEBUG,"ASB: CVDPAU::Process done outPicLock.Leave() m_freeOutPic.size(): %i m_usedOutPic.size(): %i totalAvailableOutputSurfaces: %i", m_freeOutPic.size(), m_usedOutPic.size(), totalAvailableOutputSurfaces); 
         Sleep(1);
       }
       if (!outPic)
