@@ -96,12 +96,12 @@ public:
   int GetVideoBitrate();
 
   void SetSpeed(int iSpeed);
-  int OutputPicture(const DVDVideoPicture* src, double pts, int playspeed);
+  int OutputPicture(const DVDVideoPicture* src, double pts, double delay, int playspeed);
   bool CheckRenderConfig(const DVDVideoPicture* src);
   void ResumeAfterRefreshChange();
 
 #ifdef HAS_VIDEO_PLAYBACK
-  int ProcessOverlays(DVDVideoPicture* pSource, double pts);
+  int ProcessOverlays(DVDVideoPicture* pSource, double pts, double delay);
 #endif
 
   // classes
@@ -119,7 +119,7 @@ protected:
 
 #define EOS_ABORT 1
 #define EOS_DROPPED 2
-#define EOS_VERYLATE 4
+#define EOS_STARTED 4
 #define EOS_CONFIGURE 8
 
   void AutoCrop(DVDVideoPicture* pPicture);
@@ -210,8 +210,6 @@ protected:
   int m_iDecoderDroppedFrames;
   int m_iDroppedFrames;
   int m_iPlayerDropRequests;
-
-//  double m_iCurrentPtsClock; //temporary
 
   std::string  m_formatstr;
   bool m_bAllowFullscreen;

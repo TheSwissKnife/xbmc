@@ -77,12 +77,11 @@ protected:
   void OnStartup();
   void OnExit();
   void Process();
-  bool GetPicture(ToOutputMessage toMsg);
+  bool GetPicture(bool drop = false);
   bool RefreshGlxContext();
   bool DestroyGlxContext();
 
   double m_pts;
-  int m_speed;
   CDVDVideoCodec* m_pVideoCodec;
   DVDVideoPicture m_picture;
   std::queue<ToOutputMessage> m_toOutputMessage;
@@ -97,5 +96,4 @@ protected:
   GLXPixmap m_glPixmap;
   bool m_recover;
   bool m_configuring;
-  bool m_outputprevpic;
 };
