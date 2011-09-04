@@ -61,6 +61,7 @@ void CDVDPlayerVideoOutput::Reset(bool resetConfigure /* = false */)
   if (resetConfigure)
   {
     m_configuring = false;
+    m_toMsgSignal.Set();
     return;
   }
 
@@ -171,12 +172,18 @@ void CDVDPlayerVideoOutput::Process()
   bool started = false;
   int msgSpeed = 0;
   bool outputPrevPic = false;
+  bool timeoutTryPic = false;
+  bool bMsg = false;
   double overlayDelay = m_pVideoPlayer->GetSubtitleDelay();
   double videoDelay = m_pVideoPlayer->GetDelay();
+  int newSpeed = 0;
 
   while (!m_bStop)
   {
-    if (!m_configuring && (!m_toOutputMessage.empty() || outputPrevPic))
+    mLock.Enter();
+    bMsg = m_toOutputMessage.empty();
+    mLock.Leave();
+    if (!m_configuring && (!bMsg || outputPrevPic || timeoutTryPic))
     {
       cLock.Enter();
       if (m_recover)
@@ -188,27 +195,41 @@ void CDVDPlayerVideoOutput::Process()
 
       bool newPic = false;
       bool lastPic = false;
-      if (!outputPrevPic) // then process the message
+      bool drop = false;
+      if (!outputPrevPic && bMsg) // then process the message
       {
         mLock.Enter();
         ToOutputMessage toMsg = m_toOutputMessage.front();
         m_toOutputMessage.pop();
-        bool drop = toMsg.bDrop;
+        drop = toMsg.bDrop;
         lastPic = toMsg.bLastPic;
         msgSpeed = toMsg.iSpeed;
         mLock.Leave();
+        //TODO: think about what it means to be passed a msg speed of zero otherwise - I think we should ignore and use previous?
+        newSpeed = msgSpeed;
+      }
 
-        if (lastPic)
-        {
+      if (lastPic)
+      {
           // ignore lastPic msg if we have no last pic that we output
           if (!started || !(m_picture.iFlags & DVP_FLAG_ALLOCATED))
              lastPic = false;
-        }
-        else
-          newPic = GetPicture(drop);
+      }
+      else if (outputPrevPic)
+      {
+          // ignore outputPrevPic msg if we have no allocted pic that we can output
+          if (!(m_picture.iFlags & DVP_FLAG_ALLOCATED))
+             outputPrevPic = false;
+      }
+      else
+      {  // we got a msg informing of a pic available or we timed-out waiting 
+         // and will try to get the pic anyway (assuming previous speed and no drop)
+        newPic = GetPicture(drop);
       }
 
-      if (newPic || lastPic || outputPrevPic)
+      timeoutTryPic = false; //reset
+
+      if (newPic || lastPic || outputPrevPic) //we have something to do
       {
         int iResult = 0;
         // only configure output after we got a new picture from decoder
@@ -223,7 +244,7 @@ void CDVDPlayerVideoOutput::Process()
           // output with speed of zero to force render asap
           int speed = 0;
           if (started)
-             speed = msgSpeed;
+             speed = newSpeed;
           double pts = GetPts();
           // call ProcessOverlays here even if no newPic
           m_pVideoPlayer->ProcessOverlays(&m_picture, pts, overlayDelay);
@@ -259,8 +280,8 @@ CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideoOutput::Process m_fromOutputMessage.pus
 
         // guess next frame pts. iDuration is always valid
         // required for pics with no pts value
-        if (!outputPrevPic && msgSpeed != 0)
-           SetPts(GetPts() + m_picture.iDuration * msgSpeed / abs(msgSpeed));
+        if (!outputPrevPic && newSpeed != 0)
+           SetPts(GetPts() + m_picture.iDuration * newSpeed / abs(newSpeed));
       }
     }
     else
@@ -269,10 +290,20 @@ CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideoOutput::Process m_fromOutputMessage.pus
       if (started && !m_configuring)
       {
         if (!m_toMsgSignal.WaitMSec(100))
+        {
           CLog::Log(LOGNOTICE,"CDVDPlayerVideoOutput::Process - timeout waiting for message");
+          timeoutTryPic = true;
+        }
+        else
+          timeoutTryPic = false;
       }
       else if (!m_toMsgSignal.WaitMSec(500))
+      {
+        //TODO: maybe set timeoutTryPic here too?
         CLog::Log(LOGNOTICE,"CDVDPlayerVideoOutput::Process - timeout waiting for message (configuring: %i started: %i)", (int)m_configuring, (int)started);
+      }
+      else
+        timeoutTryPic = false;
     }
   }
   DestroyGlxContext();
@@ -354,9 +385,9 @@ CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideoOutput::GetPicture picture.pts: %f", m_
   else
   {
     CLog::Log(LOGWARNING, "CDVDPlayerVideoOutput::GetPicture - error getting videoPicture.");
-    CSingleLock lock(m_criticalSection);
-    m_recover = true;
-    lock.Leave();
+//    CSingleLock lock(m_criticalSection);
+//    m_recover = true;
+//    lock.Leave();
     bReturn = false;
   }
 
