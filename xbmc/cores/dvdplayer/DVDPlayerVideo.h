@@ -87,7 +87,17 @@ public:
 
   bool InitializedOutputDevice();
 
-  int    GetPullupCorrection()                     { return m_pullupCorrection.GetPatternLength(); }
+  int GetPullupCorrectionPattern() { CSharedLock lock(m_frameRateSection); return m_pullupCorrection.GetPatternLength(); }
+
+  void FlushPullupCorrection() { CExclusiveLock lock(m_frameRateSection); return m_pullupCorrection.Flush(); }
+
+  void AddPullupCorrection(double pts) { CExclusiveLock lock(m_frameRateSection); return m_pullupCorrection.Add(pts); }
+
+  double GetPullupCorrection() { CSharedLock lock(m_frameRateSection); return m_pullupCorrection.GetCorrection(); }
+
+  double GetFrameRate() { CSharedLock lock(m_frameRateSection); return m_fFrameRate; }
+
+  bool GetAllowDecodeDrop() { CSharedLock lock(m_frameRateSection); return m_bAllowDrop; }
 
   double GetCurrentDisplayPts();
   double GetCurrentPts();
@@ -128,6 +138,8 @@ protected:
 
   int CalcDropRequirement();
   void ResetDropInfo();
+  void SetRefreshChanging(bool changing = true);
+  bool GetRefreshChanging();
 
   void ProcessVideoUserData(DVDVideoUserData* pVideoUserData, double pts);
 
@@ -169,6 +181,7 @@ protected:
     double       framerate;
     bool         inited;
     unsigned     flags;
+    bool         refreshChanging;
   } m_output; //holds currently configured output
 
 #define DROPINFO_SAMPBUFSIZE 300
@@ -226,7 +239,6 @@ protected:
   bool m_stalled;
   bool m_streamEOF;
   bool m_started;
-  bool m_refreshChanging;
   std::string m_codecname;
 
   /* autosync decides on how much of clock we should use when deciding sleep time */
@@ -243,6 +255,8 @@ protected:
 
   DVDVideoPicture* m_pTempOverlayPicture;
 
+  CSharedSection m_frameRateSection; //guard framerate related changes
+  CCriticalSection m_outputSection; //guard output struct related changes
   CPullupCorrection m_pullupCorrection;
 
   std::list<DVDMessageListItem> m_packets;
