@@ -178,7 +178,6 @@ void CXBMCRenderManager::WaitPresentTime(double presenttime, bool reset_corr /* 
 
   // we now wait and wish our clock tick result to be targetpos out from target wait
   double clock = CDVDClock::WaitAbsoluteClock(targetwaitclock * DVD_TIME_BASE) / DVD_TIME_BASE;
-  CLog::Log(LOGDEBUG, "ASB: CRenderManager::WaitPresentTime wait complete targetwaitclock: %f secs presenttime: %f frametime: %f signal_to_view_delay: %f clock: %f now: %"PRId64"", targetwaitclock, presenttime, frametime, signal_to_view_delay, clock, CurrentHostCounter());
 
   // error is number(fraction) of frames out we are from where we were trying to correct to
   double error = (clock - targetwaitclock) / frametime - targetpos;
@@ -349,7 +348,6 @@ void CXBMCRenderManager::RenderUpdate(bool clear, DWORD flags, DWORD alpha)
 
     if(m_presentstep == PRESENT_FLIP)
     {
-CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::RenderUpdate PRESENT_FLIP about to notify m_pRenderer m_renderinfo.framepts: %f m_renderinfo.frameplayspeed: %i m_renderinfo.frameId: %i", m_renderinfo.framepts, m_renderinfo.frameplayspeed, m_renderinfo.frameId);
       m_overlays.FlipRender();
       m_pRenderer->FlipPage(m_presentsource);
       m_presentstep = PRESENT_FRAME;
@@ -682,7 +680,6 @@ float CXBMCRenderManager::GetMaximumFPS()
 
 void CXBMCRenderManager::Present()
 {
-CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::Present About to retake lock  m_renderinfo.framepts: %f m_renderinfo.frameplayspeed: %i m_renderinfo.frameId: %i now: %"PRId64"", m_renderinfo.framepts, m_renderinfo.frameplayspeed, m_renderinfo.frameId, CurrentHostCounter());
   { CRetakeLock<CExclusiveLock> lock(m_sharedSection);
     if (!m_pRenderer)
       return;
@@ -692,7 +689,6 @@ CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::Present About to retake lock  m_re
 
     if(m_presentstep == PRESENT_FLIP)
     {
-CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::Present PRESENT_FLIP about to notify m_pRenderer m_renderinfo.framepts: %f m_renderinfo.frameplayspeed: %i m_renderinfo.frameId: %i now: %"PRId64"", m_renderinfo.framepts, m_renderinfo.frameplayspeed, m_renderinfo.frameId, CurrentHostCounter());
       m_overlays.FlipRender();
       m_pRenderer->FlipPage(m_presentsource);
       m_presentstep = PRESENT_FRAME;
@@ -817,7 +813,6 @@ void CXBMCRenderManager::UpdateResolution()
 
 int CXBMCRenderManager::AddVideoPicture(DVDVideoPicture& pic, double pts, double presenttime, int playspeed, bool vclockresync /* = false */)
 {
-CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::AddVideoPicture about to CSharedLock lock(m_sharedSection) pts: %f now: %"PRId64"", pts, CurrentHostCounter());
   CSharedLock lock(m_sharedSection);
   if (!m_pRenderer)
     return -1;
@@ -826,7 +821,6 @@ CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::AddVideoPicture about to CSharedLo
   m_pRenderer->AddProcessor(&pic);
 #endif
 
-CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::AddVideoPicture abouto to m_pRenderer->FlipFreeBuffer() pts: %f now: %"PRId64"", pts, CurrentHostCounter());
   YV12Image image;
   int source = m_pRenderer->FlipFreeBuffer();
   if (source < 0)
@@ -835,7 +829,6 @@ CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::AddVideoPicture abouto to m_pRende
     return -1;
   }
 
-CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::AddVideoPicture about to m_pRenderer->GetImage() pts: %f now: %"PRId64"", pts, CurrentHostCounter());
   int index = m_pRenderer->GetImage(&image, source);
 
   if(index < 0)
@@ -870,10 +863,7 @@ CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::AddVideoPicture about to m_pRender
   {
      if (pic.vdpau)
      {
-CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::AddVideoPicture about to m_pRenderer->AddProcessor() pts: %f now: %"PRId64"", pts, CurrentHostCounter());
         m_pRenderer->AddProcessor(pic.vdpau);
-CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::AddVideoPicture about to pic.vdpau->Present() pts: %f now: %"PRId64"", pts, CurrentHostCounter());
-//        pic.vdpau->PreBindAllPixmaps();
         pic.vdpau->Present(index);
      }
   }
@@ -900,17 +890,14 @@ CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::AddVideoPicture about to pic.vdpau
   *image.pVClockResync = vclockresync;
   *image.pSync = mDisplayField;
 
-CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::AddVideoPicture about to m_pRenderer->Upload() pts: %f now: %"PRId64"", pts, CurrentHostCounter());
   // upload texture
   m_pRenderer->Upload(index);
-CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::AddVideoPicture about to m_pRenderer->ReleaseImage() pts: %f now: %"PRId64"", pts, CurrentHostCounter());
 
   m_pRenderer->ReleaseImage(index, false);
 
 //  // signal new frame to application
 //  g_application.NewFrame();
 
-CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::AddVideoPicture finished pts: %f now: %"PRId64"", pts, CurrentHostCounter());
   return index;
 }
 
@@ -1021,7 +1008,6 @@ void CXBMCRenderManager::UpdateDisplayInfo()
            m_refdisplayinfo.framepts = m_displayinfo[0].framepts;
            m_refdisplayinfo.frameplayspeed = m_displayinfo[0].frameplayspeed;
         }
-//  CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::UpdateDisplayInfo 4 m_preflipclock: %f m_postflipclock: %f m_postrenderclock: %f m_renderinfo.framepts: %f m_displayinfo[0].framepts: %f m_renderinfo.frameplayspeed: %i m_refdisplayinfo.framepts: %f clocktickafterpostflipclock: %f signal_to_view_delay: %f", m_preflipclock, m_postflipclock, m_postrenderclock, m_renderinfo.framepts, m_displayinfo[0].framepts, m_renderinfo.frameplayspeed, m_refdisplayinfo.framepts, clocktickafterpostflipclock, signal_to_view_delay);
      }
      else if (!m_flipasync)
      {
@@ -1086,14 +1072,12 @@ void CXBMCRenderManager::NotifyDisplayFlip()
 
   UpdatePostFlipClock();
   UpdateDisplayInfo();
-CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::NotifyDisplayFlip about to notify m_pRenderer m_renderinfo.framepts: %f m_renderinfo.frameplayspeed: %i m_renderinfo.frameId: %i now: %"PRId64"", m_renderinfo.framepts, m_renderinfo.frameplayspeed, m_renderinfo.frameId, CurrentHostCounter());
 
   CRetakeLock<CExclusiveLock> lock(m_sharedSection);
 
   m_pRenderer->NotifyDisplayFlip();
   m_overlays.NotifyDisplayFlip();
   m_flipEvent.Set();
-CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::NotifyDisplayFlip done m_pRenderer m_renderinfo.framepts: %f m_renderinfo.frameplayspeed: %i m_renderinfo.frameId: %i now: %"PRId64"", m_renderinfo.framepts, m_renderinfo.frameplayspeed, m_renderinfo.frameId, CurrentHostCounter());
 }
 
 void CXBMCRenderManager::UpdatePostRenderClock()
@@ -1163,7 +1147,6 @@ double CXBMCRenderManager::GetCurrentDisplayPts(int& playspeed)
   else 
   {
      double interpolatepts = samplepts + ((double)(playspeed / DVD_PLAYSPEED_NORMAL) * (clock - sampleclock) * DVD_TIME_BASE);
-//  CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::GetCurrentDisplayPts clock: %f m_displayinfo[0].frameclock: %f m_displayinfo[0].framepts: %f m_displayinfo[0].refreshdur: %f m_refdisplayinfo.frameclock: %f sampleclock: %f samplepts: %f interpolatepts: %f", clock, m_displayinfo[0].frameclock, m_displayinfo[0].framepts, m_displayinfo[0].refreshdur, m_refdisplayinfo.frameclock, sampleclock, samplepts, interpolatepts);
      return interpolatepts;
   }
 }
@@ -1173,7 +1156,6 @@ void CXBMCRenderManager::CheckNextBuffer()
 {
   if(!m_pRenderer) return;
 
-CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::CheckNextBuffer begin m_renderinfo.framepts: %f m_renderinfo.frameplayspeed: %i m_renderinfo.frameId: %i now: %"PRId64"", m_renderinfo.framepts, m_renderinfo.frameplayspeed, m_renderinfo.frameId, CurrentHostCounter());
   YV12Image image;
   int source = m_pRenderer->GetNextRenderBufferIndex();
   if (source == -1)
@@ -1192,7 +1174,6 @@ CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::CheckNextBuffer begin m_renderinfo
   m_renderinfo.frameId = *image.pId; //from image
   m_renderinfo.frameplayspeed = *image.pPlaySpeed; //from image
   m_renderinfo.framedur = *image.pFrameDur/DVD_TIME_BASE; //from image
-CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::CheckNextBuffer m_renderinfo.framepts: %f m_renderinfo.frameplayspeed: %i m_renderinfo.frameId: %i now: %"PRId64"", m_renderinfo.framepts, m_renderinfo.frameplayspeed, m_renderinfo.frameId, CurrentHostCounter());
   m_vclockresync = *image.pVClockResync;
 
 //TODO: should we not do the below flip request step in even if late in non-fullscreen mode?

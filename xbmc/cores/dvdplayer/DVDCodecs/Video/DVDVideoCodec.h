@@ -249,7 +249,7 @@ public:
    * will be called by video player indicating the importance of a frame drop request 
    * urgent or not, and must not be presented or not, return true only if implemented
    */
-  virtual bool SetDropHint(int iDropHint) { return false; }
+  virtual bool SetDecoderHint(int iDecoderHint) { return false; }
 
   /*
    *

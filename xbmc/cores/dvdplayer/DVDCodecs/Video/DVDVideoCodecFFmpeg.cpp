@@ -363,6 +363,7 @@ bool CDVDVideoCodecFFmpeg::SetDecoderHint(int iDecoderHint)
 {
   if( m_pCodecContext )
   {
+
     m_iDecoderHint = iDecoderHint;
     return true;
   }
@@ -520,8 +521,6 @@ int CDVDVideoCodecFFmpeg::Decode(BYTE* pData, int iSize, double dts, double pts)
   bool bDecoderDropRequested = false;
   bool bDrain = false; // whether to try to drain buffered data
 
-//  m_picSignal.Reset();
-
   if (!m_pCodecContext)
     return VC_ERROR;
 
@@ -572,7 +571,7 @@ int CDVDVideoCodecFFmpeg::Decode(BYTE* pData, int iSize, double dts, double pts)
          //try to get some pic out of hardware to make some space
          result &= ~VC_FULL;
          // to drain or not to drain..? me thinks better not to so that we allow caller to not block here
-         result |= m_pHardware->Decode(m_pCodecContext, NULL, false);
+         result |= m_pHardware->Decode(m_pCodecContext, NULL, bDrain);
          result |= VC_AGAIN; //tell caller to try again later
       }
       if (result & VC_FLUSHED)
@@ -587,7 +586,7 @@ int CDVDVideoCodecFFmpeg::Decode(BYTE* pData, int iSize, double dts, double pts)
     {
       // this can be used to pick up outstanding pictures when extra data has not been asked for
       // eg missed pictures due to de-interlace double up or having missed ones that took too long
-      result = m_pHardware->Decode(m_pCodecContext, NULL, false);
+      result = m_pHardware->Decode(m_pCodecContext, NULL, bDrain);
       if (result & VC_FLUSHED)
       {
          Reset();
@@ -1099,7 +1098,6 @@ bool CDVDVideoCodecFFmpeg::GetPicture(DVDVideoPicture* pDvdVideoPicture)
   if(m_pHardware)
   {
     bool bReturn = m_pHardware->GetPicture(m_pCodecContext, m_pFrame, pDvdVideoPicture);
-    //m_picSignal.Set();
     return bReturn;
   }
 
