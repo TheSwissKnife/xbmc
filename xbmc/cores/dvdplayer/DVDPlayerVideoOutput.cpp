@@ -62,6 +62,7 @@ void CDVDPlayerVideoOutput::Reset(bool resetConfigure /* = false */)
   if (resetConfigure)
   {
     m_configuring = false;
+    m_toMsgSignal.Set();
     return;
   }
 

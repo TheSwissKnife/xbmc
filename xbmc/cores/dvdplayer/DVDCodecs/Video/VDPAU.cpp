@@ -1695,35 +1695,46 @@ int CVDPAU::Check(AVCodecContext* avctx)
     return 0;
 }
 
-bool CVDPAU::QueueIsFull()
+bool CVDPAU::QueueIsFull(bool wait /* = false */)
 {
-  if (m_vdpauOutputMethod == OUTPUT_GL_INTEROP_YUV) 
+  CStopWatch timer;
+  int remainingTime = 0;
+  if (wait)
+    remainingTime = 100;
+
+  timer.StartZero();
+  m_queueSignal.Reset();
+  do
   {
-     CSingleLock locku(m_outPicSec);
-     if (m_freeOutPic.empty())
-        return true; // buffers are full
-  }
-  else
-  {
-     // always ensure we have at least 1 free pic (ie assume full if only 1 freeOutPic) so that mixer cannot be starved 
-     CSingleLock lockm(m_outPicSec);
-     int msgs = m_mixerMessages.size();
-     lockm.Leave();
-     CSingleLock locku(m_outPicSec);
-     int iFreePics = m_freeOutPic.size();
-     int iNotFreePics = m_outPicsNum - iFreePics;
-     locku.Leave();
+    if (m_vdpauOutputMethod == OUTPUT_GL_INTEROP_YUV)
+    {
+      CSingleLock locku(m_outPicSec);
+       if (!m_freeOutPic.empty())
+         return false; // buffers are not full
+    }
+    else
+    {
+      // always ensure we have at least 1 free pic (ie assume full if only 1 freeOutPic) so that mixer cannot be starved
+      CSingleLock lockm(m_outPicSec);
+      int msgs = m_mixerMessages.size();
+      lockm.Leave();
+      CSingleLock locku(m_outPicSec);
+      int iFreePics = m_freeOutPic.size();
+      int iNotFreePics = m_outPicsNum - iFreePics;
+      locku.Leave();
 
-     // assume for simplicity 2 output pics can come from one frame message if de-interlacing via mixer 
-     // and that mixer-input can have 2 outstanding msgs inside it
-     int msgsFactor = m_bVdpauDeinterlacing ? 2 : 1;
+      // assume for simplicity 2 output pics can come from one frame message if de-interlacing via mixer
+      // and that mixer-input can have 2 outstanding msgs inside it
+      int msgsFactor = m_bVdpauDeinterlacing ? 2 : 1;
 
-     int estimatedPicQLength = iNotFreePics + (msgsFactor * (msgs + 2));
-     if (estimatedPicQLength >= MAX_PIC_Q_LENGTH || iFreePics < 2)
-
-     return true; // buffers are full
-  }
-  return false;
+      int estimatedPicQLength = iNotFreePics + (msgsFactor * (msgs + 2));
+      if (!(estimatedPicQLength >= MAX_PIC_Q_LENGTH || iFreePics < 2))
+        return false; // buffers are not full
+    }
+    m_queueSignal.WaitMSec(remainingTime);
+    remainingTime -= timer.GetElapsedMilliseconds();
+  } while (remainingTime > 0);
+  return true;
 }
 
 int CVDPAU::Decode(AVCodecContext *avctx, AVFrame *pFrame, bool bDrain)
@@ -1891,6 +1902,7 @@ int CVDPAU::Decode(AVCodecContext *avctx, AVFrame *pFrame, bool bDrain)
           m_freeOutPic.push_back(m_usedOutPic.front());
           m_usedOutPic.pop_front();
           lock.Leave();
+          m_queueSignal.Set();
           retval =  VC_DROPPED | VC_PRESENTDROP;
           dropped = true;
           continue;
@@ -2006,6 +2018,7 @@ bool CVDPAU::DiscardPresentPicture()
       m_presentPicture->render = NULL;
       m_freeOutPic.push_back(m_presentPicture);
       m_presentPicture = NULL;
+      m_queueSignal.Set();
       return true;
   }
   return false;
@@ -2168,12 +2181,12 @@ void CVDPAU::Present(int flipBufferIdx)
     CSingleLock lock(m_outPicSec);
     m_freeOutPic.push_back(m_flipBuffer[flipBufferIdx]);
     m_flipBuffer[flipBufferIdx] = NULL;
+    m_queueSignal.Set();
   }
 
   m_flipBuffer[flipBufferIdx] = m_presentPicture;
 
   m_presentPicture = NULL;
-
 }
 
 void CVDPAU::VDPPreemptionCallbackFunction(VdpDevice device, void* context)
@@ -2259,6 +2272,7 @@ void CVDPAU::Process()
       cmd = m_mixerCmd;
       m_mixerCmd = 0;
       gotMsg = true;
+      m_queueSignal.Set();
     }
     mixerLock.Leave();
 
@@ -2403,10 +2417,10 @@ void CVDPAU::Process()
         //TODO: this clipping for interlaced should be optional - and it also forces scaling on output overhead I guess
         // and perhaps it is better to clip output outRectVid rather than always scale?
         //TODO: offer option to make SD the correct aspect ratio when upscaling by setting the active SD width to 704 (rather than 720)
-        //sourceRect.x0 += 4;
-        //sourceRect.y0 += 2;
-        //sourceRect.x1 -= 4;
-        //sourceRect.y1 -= 2;
+        sourceRect.x0 += 4;
+        sourceRect.y0 += 2;
+        sourceRect.x1 -= 4;
+        sourceRect.y1 -= 2;
       }
 
       // get free pic from queue

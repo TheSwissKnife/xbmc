@@ -58,6 +58,7 @@ public:
     virtual bool AllowFrameDropping() {return false;};
     virtual void SetDropState(bool bDrop) {return;};
     virtual bool FreeResources(bool test = false) {return false;};
+    virtual bool QueueIsFull(bool wait = false) {return true;};
   };
 
   CDVDVideoCodecFFmpeg();
@@ -85,7 +86,7 @@ public:
   virtual unsigned int SetFilters(unsigned int filters);
   virtual const char* GetName() { return m_name.c_str(); }; // m_name is never changed after open
   virtual unsigned GetConvergeCount();
-  virtual bool WaitGetPicture();
+  virtual bool WaitForFreeBuffer();
   virtual bool HwFreeResources(bool test = false);
 
   bool               IsHardwareAllowed()                     { return !m_bSoftware; }
@@ -162,5 +163,4 @@ protected:
 
   double m_dts;
   bool   m_started;
-  CEvent m_picSignal;
 };

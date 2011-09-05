@@ -461,14 +461,13 @@ unsigned int CDVDVideoCodecFFmpeg::SetFilters(unsigned int flags)
   return flags;
 }
 
-bool CDVDVideoCodecFFmpeg::WaitGetPicture()
+bool CDVDVideoCodecFFmpeg::WaitForFreeBuffer()
 {
-  if (m_pHardware && !m_picSignal.WaitMSec(500))
-  {
-    CLog::Log(LOGWARNING, "CDVDVideoCodecFFmpeg::WaitGetPicture - timed out");
-    return true;
-  }
-  return false;
+  bool bReturn = true;
+  if (m_pHardware && m_pHardware->QueueIsFull(true))
+    bReturn = false;
+
+  return bReturn;
 }
 
 bool CDVDVideoCodecFFmpeg::HwFreeResources(bool test /* = false */)
@@ -519,8 +518,6 @@ int CDVDVideoCodecFFmpeg::Decode(BYTE* pData, int iSize, double dts, double pts)
   // flag whether we want to request a drop via decoder
   bool bDecoderDropRequested = false;
   bool bDrain = false; // whether to try to drain buffered data
-
-//  m_picSignal.Reset();
 
   if (!m_pCodecContext)
     return VC_ERROR;
@@ -1096,7 +1093,6 @@ bool CDVDVideoCodecFFmpeg::GetPicture(DVDVideoPicture* pDvdVideoPicture)
   if(m_pHardware)
   {
     bool bReturn = m_pHardware->GetPicture(m_pCodecContext, m_pFrame, pDvdVideoPicture);
-    //m_picSignal.Set();
     return bReturn;
   }
 
