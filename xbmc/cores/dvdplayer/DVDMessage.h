@@ -55,6 +55,7 @@ public:
     GENERAL_DELAY,                  //
     GENERAL_GUI_ACTION,             // gui action of some sort
     GENERAL_EOF,                    // eof of stream
+    GENERAL_NO_CMD,
 
 
     // player core related messages (cdvdplayer.cpp)

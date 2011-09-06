@@ -178,7 +178,6 @@ void CXBMCRenderManager::WaitPresentTime(double presenttime, bool reset_corr /* 
 
   // we now wait and wish our clock tick result to be targetpos out from target wait
   double clock = CDVDClock::WaitAbsoluteClock(targetwaitclock * DVD_TIME_BASE) / DVD_TIME_BASE;
-  CLog::Log(LOGDEBUG, "ASB: CRenderManager::WaitPresentTime wait complete targetwaitclock: %f secs presenttime: %f frametime: %f signal_to_view_delay: %f clock: %f now: %"PRId64"", targetwaitclock, presenttime, frametime, signal_to_view_delay, clock, CurrentHostCounter());
 
   // error is number(fraction) of frames out we are from where we were trying to correct to
   double error = (clock - targetwaitclock) / frametime - targetpos;
@@ -690,11 +689,6 @@ void CXBMCRenderManager::Present()
 
     if(m_presentstep == PRESENT_FLIP)
     {
-      // overlays has to be flipped if picture flips
-      // in order to remove old ones
-//      m_overlays.Flip();
-//      m_requestOverlayFlip = false;
-
       m_overlays.FlipRender();
       m_requestOverlayFlip = false;
       m_pRenderer->FlipPage(m_presentsource);

@@ -1180,6 +1180,7 @@ void CDVDPlayer::Process()
       // if we are caching, start playing it again
       SetCaching(CACHESTATE_DONE);
 
+//TODO: determine how to keep the stream open until the player confirms it is has finished, but ignoring the fact there is no packet from demuxer
       // while players are still playing, keep going to allow seekbacks
       if(m_dvdPlayerAudio.m_messageQueue.GetDataSize() > 0
       || m_dvdPlayerVideo.m_messageQueue.GetDataSize() > 0)

@@ -1913,7 +1913,6 @@ bool CApplication::RenderNoPresent()
 //  g_graphicsContext.AcquireCurrentContext();
 
   g_graphicsContext.Lock();
-//CLog::Log(LOGDEBUG, "ASB RenderNoPresent() got g_graphicsContext.Lock() now: %"PRId64"", CurrentHostCounter());
 
   // dont show GUI when playing full screen video
   if (g_graphicsContext.IsFullScreenVideo())
@@ -1935,7 +1934,6 @@ bool CApplication::RenderNoPresent()
   }
 
   bool hasRendered = g_windowManager.Render();
-//CLog::Log(LOGDEBUG, "ASB RenderNoPresent() got done g_renderManager.Present + g_windowManager.Render hasRendered: %i now: %"PRId64"", (int)hasRendered, CurrentHostCounter());
 
   // if we're recording an audio stream then show blinking REC
   if (!g_graphicsContext.IsFullScreenVideo())
@@ -1996,7 +1994,6 @@ void CApplication::NewFrame()
     m_frameCount++;
   }
 
-//CLog::Log(LOGDEBUG, "ASB Application: NewFrame() m_frameCount: %i now: %"PRId64"", m_frameCount, CurrentHostCounter());
 
   m_frameCond.notifyAll();
 }
@@ -2030,7 +2027,6 @@ void CApplication::Render()
     bool extPlayerActive = m_eCurrentPlayer >= EPC_EXTPLAYER && IsPlaying() && !m_AppFocused;
 
     m_bPresentFrame = false;
-//CLog::Log(LOGDEBUG, "ASB Application: about to CSingleLock lock(m_frameMutex) now: %"PRId64"", CurrentHostCounter());
     if (!extPlayerActive && g_graphicsContext.IsFullScreenVideo() && !IsPaused())
     {
       CSingleLock lock(m_frameMutex);
@@ -2041,7 +2037,6 @@ void CApplication::Render()
       m_bPresentFrame = m_frameCount > 0;
       decrement = m_bPresentFrame;
       hasRendered = true;
-//CLog::Log(LOGDEBUG, "ASB Application: 2 m_frameCount: %i now: %"PRId64"", m_frameCount, CurrentHostCounter());
     }
     else
     {
@@ -2070,7 +2065,6 @@ void CApplication::Render()
     }
   }
 
-//CLog::Log(LOGDEBUG, "ASB Application: 3 about to CSingleLock lock(g_graphicsContext) m_frameCount: %i now: %"PRId64"", m_frameCount, CurrentHostCounter());
   CSingleLock lock(g_graphicsContext);
   g_infoManager.UpdateFPS();
 
@@ -2085,11 +2079,9 @@ void CApplication::Render()
     return;
 
   int64_t pre = CurrentHostCounter();
-//CLog::Log(LOGDEBUG, "ASB Application: about to RenderNoPresent m_frameCount: %i now: %"PRId64"", m_frameCount, pre);
   if (RenderNoPresent())
     hasRendered = true;
   int64_t post = CurrentHostCounter();
-//CLog::Log(LOGDEBUG, "ASB Application: done RenderNoPresent now: %"PRId64" DUR: %i", post, (int)((int64_t)(post - pre)/1000000));
 
   g_Windowing.EndRender();
 
@@ -2136,14 +2128,12 @@ void CApplication::Render()
   g_renderManager.UpdateResolution();
   g_renderManager.ManageCaptures();
 
-//CLog::Log(LOGDEBUG, "ASB Application: 10 about to CSingleLock lock(m_frameMutex) for m_frameCount decrement  m_frameCount: %i decrement: %i now: %"PRId64"", m_frameCount, (int)decrement, CurrentHostCounter());
   {
     CSingleLock lock(m_frameMutex);
     //if(m_frameCount > 0 && decrement)
     if(m_frameCount > 0 && decrement)
       m_frameCount--;
   }
-//CLog::Log(LOGDEBUG, "ASB Application: 10 about to m_frameCond.notifyAll  m_frameCount: %i now: %"PRId64"", m_frameCount, CurrentHostCounter());
   m_frameCond.notifyAll();
 }
 

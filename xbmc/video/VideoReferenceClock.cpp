@@ -1456,7 +1456,7 @@ bool CVideoReferenceClock::SetSpeed(double Speed)
     if (Speed != m_ClockSpeed)
     {
       m_ClockSpeed = Speed;
-      CLog::Log(LOGDEBUG, "CVideoReferenceClock: Clock speed %f%%", GetSpeed() * 100.0);
+      CLog::Log(LOGDEBUG, "CVideoReferenceClock: Clock speed %f%%", m_ClockSpeed * 100.0);
       return true;
     }
   }

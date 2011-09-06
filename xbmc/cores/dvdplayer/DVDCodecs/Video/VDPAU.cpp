@@ -1883,6 +1883,7 @@ int CVDPAU::Decode(AVCodecContext *avctx, AVFrame *pFrame, bool bDrain)
   int msgsFactor = m_bVdpauDeinterlacing ? 2 : 1; //how many usedPics can come out of 1 mixer input msg
   bool dropped = false;
   bool prevNotEmpty = true;
+//CLog::Log(LOGDEBUG,"ASB: CVDPAU::Decode bDrain: %i targetUsed: %i", (int)bDrain, targetUsed);
   while (++iter < 2000)
   {
     { CSingleLock lock(m_outPicSec);
@@ -1902,7 +1903,6 @@ int CVDPAU::Decode(AVCodecContext *avctx, AVFrame *pFrame, bool bDrain)
           m_freeOutPic.push_back(m_usedOutPic.front());
           m_usedOutPic.pop_front();
           lock.Leave();
-          m_queueSignal.Set();
           retval =  VC_DROPPED | VC_PRESENTDROP;
           dropped = true;
           continue;
@@ -1914,7 +1914,7 @@ int CVDPAU::Decode(AVCodecContext *avctx, AVFrame *pFrame, bool bDrain)
        if ((!bDrain) && usedPics < targetUsed && (!QueueIsFull()))
           return VC_BUFFER;
 
-//CLog::Log(LOGDEBUG,"ASB: CVDPAU::Decode m_lastReportedReadyPic: %u usedPicFront: %u", (unsigned int)m_lastReportedReadyPic, (unsigned int)usedPicFront);
+//CLog::Log(LOGDEBUG,"ASB: CVDPAU::Decode m_lastReportedReadyPic: %u usedPicFront: %u usedPics: %i", (unsigned int)m_lastReportedReadyPic, (unsigned int)usedPicFront, usedPics);
        if (m_lastReportedReadyPic != usedPicFront) //we have not reported about this usedPic yet
        {
           if (m_vdpauOutputMethod == OUTPUT_PIXMAP)
@@ -1964,10 +1964,12 @@ int CVDPAU::Decode(AVCodecContext *avctx, AVFrame *pFrame, bool bDrain)
       // we got a signal to check msgs & usedPics again
       continue;
     }
-    if (!(usedPics == 0 && msgs * msgsFactor >= MAX_PIC_Q_LENGTH - 1)) //only don't enter here if previous wait timed out
+    //only don't enter here if previous wait timed out
+    if (!(usedPics == 0 && msgs * msgsFactor >= MAX_PIC_Q_LENGTH - 1))
     {
       if (bDrain)
       {
+         // TODO: improve mixer drain logic so that it occurs if usedPics+msgs==0 for say 50ms and asked to drain throughout
          if (usedPics == 0 && msgs == 0 && prevNotEmpty && iter > 100) 
          {
             CSingleLock lock(m_mixerSec);
@@ -2029,7 +2031,7 @@ bool CVDPAU::GetPicture(AVCodecContext* avctx, AVFrame* frame, DVDVideoPicture* 
   { CSingleLock lock(m_outPicSec);
 
     if (DiscardPresentPicture())
-      CLog::Log(LOGDEBUG,"CVDPAU::GetPicture: old presentPicture still valid");
+      CLog::Log(LOGDEBUG,"CVDPAU::GetPicture: old presentPicture was still valid - now discarded");
     if (m_usedOutPic.size() > 0)
     {
       m_presentPicture = m_usedOutPic.front();
@@ -2041,6 +2043,7 @@ bool CVDPAU::GetPicture(AVCodecContext* avctx, AVFrame* frame, DVDVideoPicture* 
       return false;
     }
   }
+//CLog::Log(LOGDEBUG,"ASB: CVDPAU::GetPicture: m_presentPicture: %u", (unsigned int)m_presentPicture);
 
   *picture = m_presentPicture->DVDPic;
 
@@ -2185,6 +2188,7 @@ void CVDPAU::Present(int flipBufferIdx)
   }
 
   m_flipBuffer[flipBufferIdx] = m_presentPicture;
+  m_presentPicture = NULL;
 
   m_presentPicture = NULL;
 }

@@ -184,7 +184,7 @@ void CDVDPlayerVideoOutput::Process()
     mLock.Enter();
     bMsg = !m_toOutputMessage.empty();
     mLock.Leave();
-    if (!m_configuring && (bMsg || outputPrevPic))
+    if (!m_configuring && (bMsg || outputPrevPic || timeoutTryPic))
     {
       cLock.Enter();
       if (m_recover)
@@ -288,6 +288,7 @@ void CDVDPlayerVideoOutput::Process()
     else
     {
       // waiting for a VC_PICTURE message or a finished configuring state
+      //TODO: decide how to best deal with timeouts here in terms of possibly having missed a msg event
       if (started && !m_configuring)
       {
         if (!m_toMsgSignal.WaitMSec(100))
@@ -298,9 +299,13 @@ void CDVDPlayerVideoOutput::Process()
         else
           timeoutTryPic = false;
       }
-      else if (!m_toMsgSignal.WaitMSec(500))
+      else if (!m_toMsgSignal.WaitMSec(1000))
       {
-        //TODO: maybe set timeoutTryPic here too?
+        //TODO: maybe set timeoutTryPic here with some better logic eg cumulative timeout?
+        if (!started)
+           timeoutTryPic = false;
+        else
+           timeoutTryPic = false;
         CLog::Log(LOGNOTICE,"CDVDPlayerVideoOutput::Process - timeout waiting for message (configuring: %i started: %i)", (int)m_configuring, (int)started);
       }
       else
