@@ -344,6 +344,11 @@ bool CDVDVideoCodecFFmpeg::HintHurryUp()
    return (m_iDecoderHint & VC_HINT_HURRYUP);
 }
 
+bool CDVDVideoCodecFFmpeg::HintHardDrain()
+{
+   return (m_iDecoderHint & VC_HINT_HARDDRAIN);
+}
+
 bool CDVDVideoCodecFFmpeg::HintNoPostProc()
 {
    return (m_iDecoderHint & VC_HINT_NOPOSTPROC);
@@ -518,23 +523,23 @@ int CDVDVideoCodecFFmpeg::Decode(BYTE* pData, int iSize, double dts, double pts)
   bool bDropRequested = false;
   // flag whether we want to request a drop via decoder
   bool bDecoderDropRequested = false;
-  bool bDrain = false; // whether to try to drain buffered data
+  bool bHardDrain = false; // whether to try to drain decoder buffered/reference data (should be avoided until input has finished)
+  bool bSoftDrain = false; // whether to try to drain hardware post decode buffered data 
 
   if (!m_pCodecContext)
     return VC_ERROR;
-
-  if (iSize == -1 || (HintHurryUp()))
-  {
-     if (iSize == -1)
-       iSize = 0;
-     bDrain = true;
-  }
 
   if (pData && iSize > 0)
   {
      bInputData = true;
      m_iLastKeyframe++;
   }
+
+  if (HintHurryUp())
+     bSoftDrain = true;
+
+  if (!bInputData && HintHardDrain())
+     bHardDrain = true;
 
   SetDropMethod(m_bDropRequested, bInputData);
   if (m_bDropRequested && (!m_bHardwareDropRequested)) 
@@ -570,7 +575,7 @@ int CDVDVideoCodecFFmpeg::Decode(BYTE* pData, int iSize, double dts, double pts)
          //try to get some pic out of hardware to make some space
          result &= ~VC_FULL;
          // to drain or not to drain..? me thinks better not to so that we allow caller to not block here
-         result |= m_pHardware->Decode(m_pCodecContext, NULL, bDrain);
+         result |= m_pHardware->Decode(m_pCodecContext, NULL, bSoftDrain, bHardDrain);
          result |= VC_AGAIN; //tell caller to try again later
       }
       if (result & VC_FLUSHED)
@@ -585,7 +590,7 @@ int CDVDVideoCodecFFmpeg::Decode(BYTE* pData, int iSize, double dts, double pts)
     {
       // this can be used to pick up outstanding pictures when extra data has not been asked for
       // eg missed pictures due to de-interlace double up or having missed ones that took too long
-      result = m_pHardware->Decode(m_pCodecContext, NULL, bDrain);
+      result = m_pHardware->Decode(m_pCodecContext, NULL, bSoftDrain, bHardDrain);
       if (result & VC_FLUSHED)
       {
          Reset();
@@ -619,7 +624,7 @@ int CDVDVideoCodecFFmpeg::Decode(BYTE* pData, int iSize, double dts, double pts)
   avpkt.flags = AV_PKT_FLAG_KEY;
 
   // if we got no packet input data and we have not been asked to try to empty the decoder then return VC_BUFFER
-  if ((!bInputData) && (!bDrain))
+  if ((!bInputData) && (!bHardDrain))
      return VC_BUFFER | VC_NOTDECODERDROPPED;
 
   if (bDecoderDropRequested)
@@ -764,7 +769,7 @@ int CDVDVideoCodecFFmpeg::Decode(BYTE* pData, int iSize, double dts, double pts)
       // this may include giving us a picture that reached readiness from its queue 
       // (but regardless set VC_BUFFER since we did not get a picture and we could end up not getting 
       // any more pictures if this call is not trustworthy)
-      result = VC_BUFFER | m_pHardware->Decode(m_pCodecContext, NULL, bDrain);
+      result = VC_BUFFER | m_pHardware->Decode(m_pCodecContext, NULL, bSoftDrain, bHardDrain);
       if(result & VC_FLUSHED)
          Reset();
     }
@@ -839,7 +844,7 @@ int CDVDVideoCodecFFmpeg::Decode(BYTE* pData, int iSize, double dts, double pts)
   }
 
   if(m_pHardware)
-    result = m_pHardware->Decode(m_pCodecContext, m_pFrame, bDrain);
+    result = m_pHardware->Decode(m_pCodecContext, m_pFrame, bSoftDrain, bHardDrain);
   else if(m_pFilterGraph)
     result = FilterProcess(m_pFrame);
   else

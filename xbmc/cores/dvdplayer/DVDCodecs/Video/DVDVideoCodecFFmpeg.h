@@ -45,7 +45,7 @@ public:
     virtual ~IHardwareDecoder() {};
     virtual bool Open      (AVCodecContext* avctx, const enum PixelFormat) = 0;
     virtual int  Decode    (AVCodecContext* avctx, AVFrame* frame) = 0;
-    virtual int  Decode    (AVCodecContext* avctx, AVFrame* frame, bool bDrain) {return Decode(avctx, frame);};
+    virtual int  Decode    (AVCodecContext* avctx, AVFrame* frame, bool bSoftDrain, bool bHardDrain) {return Decode(avctx, frame);};
     virtual bool GetPicture(AVCodecContext* avctx, AVFrame* frame, DVDVideoPicture* picture) = 0;
     virtual int  Check     (AVCodecContext* avctx) = 0;
     virtual bool DiscardPresentPicture() {return false;};
@@ -76,6 +76,7 @@ public:
   virtual bool HintNoPostProc();
   virtual bool HintNoPresent();
   virtual bool HintHurryUp();
+  virtual bool HintHardDrain();
   virtual void ResetHintNoPresent();
   virtual bool SubtleHardwareDropping();
   virtual void ResetDropState();

@@ -102,13 +102,16 @@ void CDVDPlayerVideoOutput::OnExit()
   CLog::Log(LOGNOTICE, "CDVDPlayerVideoOutput::OnExit: Output Thread terminated");
 }
 
-void CDVDPlayerVideoOutput::SendMessage(ToOutputMessage &msg)
+bool CDVDPlayerVideoOutput::SendMessage(ToOutputMessage &msg)
 {
+  if (m_bStop)
+     return false;
   CSingleLock lock(m_msgSection);
   m_toOutputMessage.push(msg);
   lock.Leave();
 
   m_toMsgSignal.Set();
+  return true;
 }
 
 int CDVDPlayerVideoOutput::GetMessageSize()

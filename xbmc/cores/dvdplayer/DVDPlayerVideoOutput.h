@@ -67,7 +67,7 @@ public:
   void Start();
   void Reset(bool resetConfigure = false);
   void Dispose();
-  void SendMessage(ToOutputMessage &msg);
+  bool SendMessage(ToOutputMessage &msg);
   bool GetMessage(FromOutputMessage &msg, bool bWait);
   int GetMessageSize();
   void SetCodec(CDVDVideoCodec *codec);
