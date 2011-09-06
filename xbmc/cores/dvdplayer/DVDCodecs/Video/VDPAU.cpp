@@ -1707,7 +1707,7 @@ bool CVDPAU::QueueIsFull()
   else
   {
      // always ensure we have at least 1 free pic (ie assume full if only 1 freeOutPic) so that mixer cannot be starved 
-     CSingleLock lockm(m_outPicSec);
+     CSingleLock lockm(m_mixerSec);
      int msgs = m_mixerMessages.size();
      lockm.Leave();
      CSingleLock locku(m_outPicSec);
@@ -1720,14 +1720,14 @@ bool CVDPAU::QueueIsFull()
      int msgsFactor = m_bVdpauDeinterlacing ? 2 : 1;
 
      int estimatedPicQLength = iNotFreePics + (msgsFactor * (msgs + 2));
-//CLog::Log(LOGDEBUG,"ASB: CVDPAU::QueueIsFull estimatedPicQLength: %i iNotFreePics: %i iFreePics: %i", estimatedPicQLength, iNotFreePics, iFreePics);
+CLog::Log(LOGDEBUG,"ASB: CVDPAU::QueueIsFull estimatedPicQLength: %i iNotFreePics: %i iFreePics: %i", estimatedPicQLength, iNotFreePics, iFreePics);
      if (estimatedPicQLength >= MAX_PIC_Q_LENGTH || iFreePics < 2)
         return true; // buffers are full
   }
   return false;
 }
 
-int CVDPAU::Decode(AVCodecContext *avctx, AVFrame *pFrame, bool bDrain)
+int CVDPAU::Decode(AVCodecContext *avctx, AVFrame *pFrame, bool bSoftDrain, bool bHardDrain)
 {
   //CLog::Log(LOGNOTICE,"%s",__FUNCTION__);
   VdpStatus vdp_st;
@@ -1847,14 +1847,14 @@ int CVDPAU::Decode(AVCodecContext *avctx, AVFrame *pFrame, bool bDrain)
 
         if (usedPics > 0 && usedPicFront != m_lastReportedReadyPic) //we have not reported about this usedPic yet
         {
-           if (bDrain || usedPics >= targetUsed)
+           if (bSoftDrain || usedPics >= targetUsed)
            {
               m_lastReportedReadyPic = usedPicFront;
               retval = VC_PICTURE;
               break;
            }
         }
-        if (usedPics > 0 && bDrain && iter < 200) //loop again to check to see if GetPicture has been called if asked to drain
+        if (usedPics > 0 && bSoftDrain && iter < 200) //loop again to check to see if GetPicture has been called if asked to drain
         {
            usleep(100);
            continue;
@@ -1873,8 +1873,8 @@ int CVDPAU::Decode(AVCodecContext *avctx, AVFrame *pFrame, bool bDrain)
   int msgsFactor = m_bVdpauDeinterlacing ? 2 : 1; //how many usedPics can come out of 1 mixer input msg
   bool dropped = false;
   bool prevNotEmpty = true;
-//CLog::Log(LOGDEBUG,"ASB: CVDPAU::Decode bDrain: %i targetUsed: %i", (int)bDrain, targetUsed);
-  while (++iter < 2000)
+//CLog::Log(LOGDEBUG,"ASB: CVDPAU::Decode bSoftDrain: %i targetUsed: %i", (int)bSoftDrain, targetUsed);
+  while (++iter < 1000)
   {
     { CSingleLock lock(m_outPicSec);
       usedPics = m_usedOutPic.size();
@@ -1901,7 +1901,7 @@ int CVDPAU::Decode(AVCodecContext *avctx, AVFrame *pFrame, bool bDrain)
 
        // if not asked to drain and not enough data queued then request more data - don't tell caller there is a picture
        // in order to promote pre-buffering. 
-       if ((!bDrain) && usedPics < targetUsed && (!QueueIsFull()))
+       if ((!bSoftDrain) && usedPics < targetUsed && (!QueueIsFull()))
           return VC_BUFFER;
 
 //CLog::Log(LOGDEBUG,"ASB: CVDPAU::Decode m_lastReportedReadyPic: %u usedPicFront: %u usedPics: %i", (unsigned int)m_lastReportedReadyPic, (unsigned int)usedPicFront, usedPics);
@@ -1956,10 +1956,9 @@ int CVDPAU::Decode(AVCodecContext *avctx, AVFrame *pFrame, bool bDrain)
     }
     if (!(usedPics == 0 && msgs * msgsFactor >= MAX_PIC_Q_LENGTH - 1)) //only don't enter here if previous wait timed out
     {
-      if (bDrain)
+      if (bSoftDrain)
       {
-         // TODO: improve mixer drain logic so that it occurs if usedPics+msgs==0 for say 50ms and asked to drain throughout
-         if (usedPics == 0 && msgs == 0 && prevNotEmpty && iter > 100) 
+         if (usedPics == 0 && msgs == 0 && prevNotEmpty && iter > 100 && bHardDrain) 
          {
             CSingleLock lock(m_mixerSec);
             m_mixerCmd |= MIXER_CMD_DRAIN;

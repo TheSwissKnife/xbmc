@@ -137,6 +137,7 @@ struct DVDVideoUserData
 #define VC_HINT_NOPRESENT  0x00000004 // regardless of any success in dropping in decoder do not present (ie set DVP_FLAG_DROPPED in picture)
 #define VC_HINT_NOPOSTPROC 0x00000008 // indicate that pictures should not have any non-essential post processing performed on them
 #define VC_HINT_HURRYUP    0x00000010 // indicate that decoder should hurry up (though does not imply drop)
+#define VC_HINT_HARDDRAIN  0x00000020 // indicate that decoder should try to drain its buffered/reference data 
 
 #define DVP_QSCALE_UNKNOWN          0
 #define DVP_QSCALE_MPEG1            1

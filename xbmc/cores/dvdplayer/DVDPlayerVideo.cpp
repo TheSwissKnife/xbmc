@@ -583,6 +583,8 @@ CLog::Log(LOGDEBUG, "ASB: DVDPlayerVideo::Process bStreamEOF message");
 
       if (!bPacket)
       {
+        if (bStreamEOF)
+           iDecoderHint |= VC_HINT_HARDDRAIN;
         m_pVideoCodec->SetDropState(bRequestDrop);
         m_pVideoCodec->SetDecoderHint(iDecoderHint);
 CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo !bPacket about to deliver to m_pVideoCodec->Decode NULL bRequestDrop: %i iDecoderHint: %i", (int)bRequestDrop, iDecoderHint);
@@ -758,6 +760,8 @@ CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo hurry up m_fLastDecodedPictureClock: %
             bHurryUpDecode = true;
         }
 
+        ToOutputMessage toMsg;
+        bool bMsgSent = false;
         // check for a new picture
         if (iDecoderState & VC_PICTURE)
         {
@@ -766,7 +770,6 @@ CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo hurry up m_fLastDecodedPictureClock: %
           m_fLastDecodedPictureClock = fDecodedPictureClock;
 
           // prepare picture event message for output thread
-          ToOutputMessage toMsg;
           // determine if picture should be dropped on output (after it has extracted timing info):
           // 1) if decoder is not informing us of dropping accurately and player requested the demux packet 
           //    drop then request this picture to output drop (despite the discrepancy between packet in and picture out)
@@ -788,17 +791,37 @@ CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo hurry up m_fLastDecodedPictureClock: %
           }
           // send the picture event message to output thread
 CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo about to deliver to output msg for VC_PICTURE m_speed: %i, frametime: %f bDrop: %i m_started: %i", m_speed, frametime, (int)toMsg.bDrop, (int)m_started);
-          m_pVideoOutput->SendMessage(toMsg);
+          bMsgSent = m_pVideoOutput->SendMessage(toMsg);
+          if (!bMsgSent)
+          {
+             // try to reset output if this failed   
+             m_pVideoOutput->Reset();
+             bMsgSent = m_pVideoOutput->SendMessage(toMsg);
+             if (!bMsgSent)
+             {
+               CLog::Log(LOGERROR, "CDVDPlayerVideo failed to send message to output thread");
+             }
+          }
         }
 
         FromOutputMessage fromMsg;
-        bool msgwait = false;
-        if (!m_started && (iDecoderState & VC_PICTURE)) //first picture output we wait for a reply to get reconfigured early
+        bool bMsgWait = false;
+        if (!m_started && bMsgSent) //first pic msg we wait for a reply to get reconfigured early
         {
-CLog::Log(LOGNOTICE, "ASB: CDVDPlayerVideo setting msgwait");
-           msgwait = true;
+CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo setting msgwait");
+           bMsgWait = true;
         }
-        bool bGotMsg = m_pVideoOutput->GetMessage(fromMsg, msgwait);
+        bool bGotMsg = m_pVideoOutput->GetMessage(fromMsg, bMsgWait);
+        if (!bGotMsg && bMsgWait && bMsgSent)
+        {
+           CLog::Log(LOGNOTICE, "ASB: CDVDPlayerVideo m_pVideoOutput->GetMessage with wait failed, resetting output");
+           m_pVideoOutput->Reset();
+           m_pVideoOutput->SendMessage(toMsg);
+           bGotMsg = m_pVideoOutput->GetMessage(fromMsg, true);
+           if (!bGotMsg)
+              CLog::Log(LOGERROR, "CDVDPlayerVideo wait for output message failed");
+        }
+           
         int iResult = 0;
         if (bGotMsg)
         {
@@ -895,6 +918,8 @@ CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo m_pVideoCodec->Decode returned: %i", i
           iDecoderHint = VC_HINT_HURRYUP;
           if (abs(m_speed) > DVD_PLAYSPEED_NORMAL)
              iDecoderHint |= VC_HINT_NOPOSTPROC;
+          if (bStreamEOF)
+             iDecoderHint |= VC_HINT_HARDDRAIN;
           m_pVideoCodec->SetDropState(bRequestDrop);
           m_pVideoCodec->SetDecoderHint(iDecoderHint);
 CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo about to deliver to m_pVideoCodec->Decode NULL bRequestDrop: %i iDecoderHint: %i", (int)bRequestDrop, iDecoderHint);
