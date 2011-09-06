@@ -385,8 +385,8 @@ bool CDVDPlayerVideoOutput::GetPicture(bool drop /* = false*/)
       SetPts(m_picture.pts);
     }
 
-    if (m_picture.iRepeatPicture)
-      m_picture.iDuration *= m_picture.iRepeatPicture + 1;
+//    if (m_picture.iRepeatPicture)
+//      m_picture.iDuration *= m_picture.iRepeatPicture + 1;
 
     bReturn = true;
   }
