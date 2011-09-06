@@ -343,6 +343,7 @@ void CDVDPlayerVideo::Process()
   bool bRequestDrop = false;
   bool bHurryUpDecode = false;
   bool bStreamEOF = false;
+  bool bNoMsg = true; //true if we did not get a msg from queue
 
   m_videoStats.Start();
   SetRefreshChanging(false);
@@ -350,22 +351,35 @@ void CDVDPlayerVideo::Process()
   while (!m_bStop)
   {
     double frametime = (double)DVD_TIME_BASE / GetFrameRate(); //need to re-evaluate as m_fFrameRate can be initially wrong
-    int iQueueTimeOut = (int)(m_stalled ? frametime / 4 : frametime * 10) / 1000;
+    //TODO: the timeout for stalled should be better as 1 frametime?
+    //TODO: the timeout for not stalled should be better as 1ms once started - but only consider as a stall if we don't get a packet for say 5 frametimes after last decode
+    // when no packet just go to decode section again with a fake a "decode again" msg
+    //int iQueueTimeOut = (int)(m_stalled ? frametime / 4 : frametime * 10) / 1000;
+    int iQueueTimeOut; // msg get timeout in ms
+    if (!m_started)
+       iQueueTimeOut = (frametime * 10) / 1000;
+    else if (m_stalled)
+       iQueueTimeOut = frametime / 1000;
+    else
+       iQueueTimeOut = 1;
+    
     int iPriority = (m_speed == DVD_PLAYSPEED_PAUSE && m_started) ? 1 : 0;
     if (GetRefreshChanging())
       iPriority = 20;
 
     CDVDMsg* pMsg;
+    //TODO: if we use the logic in comments above we don't need this loop below - just wait directly
     // wait for messages with finer timeout control so that we can later add capability to not stall after last demux packet
     MsgQueueReturnCode ret;
-    while (iQueueTimeOut > 0)
-    {
-      int timeout = std::min(iQueueTimeOut, 5);
-      iQueueTimeOut -= timeout;
-      ret = m_messageQueue.Get(&pMsg, timeout, iPriority);
-      if (ret != MSGQ_TIMEOUT)
-         break;
-    }
+    //while (iQueueTimeOut > 0)
+    //{
+    //  int timeout = std::min(iQueueTimeOut, 5);
+    //  iQueueTimeOut -= timeout;
+    //  ret = m_messageQueue.Get(&pMsg, timeout, iPriority);
+    //  if (ret != MSGQ_TIMEOUT)
+    //     break;
+    //}
+    ret = m_messageQueue.Get(&pMsg, iQueueTimeOut, iPriority);
 
     if (MSGQ_IS_ERROR(ret) || ret == MSGQ_ABORT)
     {
@@ -374,39 +388,48 @@ void CDVDPlayerVideo::Process()
     }
     else if (ret == MSGQ_TIMEOUT)
     {
+      bNoMsg = true;
       // if we only wanted priority messages, this isn't a stall
       if( iPriority )
         continue;
 
-      CLog::Log(LOGDEBUG, "ASB: DVDPlayerVideo::Process MSGQ_TIMEOUT setting m_stalled");
-      //TODO: add back in my code to drain the decoder before considering a timeout as a stall
-      // we should only stall if we have both MSGQ timeout and at least say 3 frametimes elapsed since last decoded pic
-
       //Okey, start rendering at stream fps now instead, we are likely in a stillframe
       if( !m_stalled )
       {
-        if(m_started)
-          CLog::Log(LOGINFO, "CDVDPlayerVideo - Stillframe detected, switching to forced %f fps", GetFrameRate());
-        m_stalled = true;
-        pts+= frametime*4;
-        // drive pts for overlays (still frames)
-        m_pVideoOutput->SetPts(m_pVideoOutput->GetPts() + frametime*4);
+        double fDecodedPictureClock = CDVDClock::GetAbsoluteClock(true);
+        if ( (m_fLastDecodedPictureClock != DVD_NOPTS_VALUE && 
+              CDVDClock::GetAbsoluteClock(true) - m_fLastDecodedPictureClock < frametime * 5) ||
+              bStreamEOF) //TODO: add decode buffer full
+        {
+           pMsg = new CDVDMsgDemuxerPacket(0); //temporary solution
+        }
+        else
+        {
+           if(m_started)
+             CLog::Log(LOGINFO, "CDVDPlayerVideo - Stillframe detected, switching to forced %f fps", GetFrameRate());
+CLog::Log(LOGDEBUG, "ASB: DVDPlayerVideo::Process MSGQ_TIMEOUT setting m_stalled");
+           m_stalled = true;
+           pts+= frametime*4;
+           // drive pts for overlays (still frames)
+           m_pVideoOutput->SetPts(m_pVideoOutput->GetPts() + frametime*4);
+        }
       }
-      else 
+      else //TODO: should this pts increment match iQueueTimeOut?
         m_pVideoOutput->SetPts(m_pVideoOutput->GetPts() + frametime);
-      if (m_started)
+      if (m_stalled && m_started)
       {
         ToOutputMessage toMsg;
         toMsg.bLastPic = true;
         toMsg.iSpeed = m_speed;
+        toMsg.bPlayerStarted = m_started;
 CLog::Log(LOGDEBUG, "ASB CDVDPlayerVideo -ret == MSGQ_TIMEOUT sending toMsg.bLastPic = true");
         m_pVideoOutput->SendMessage(toMsg);
       }
-
-// TODO: create a fake "decode again" msg if pMsg points o a null msg (eg for bStreamEOF state or for when decode buffers are full)
-// don't continue when we want to decode again
-      continue;
+      if (m_stalled)
+         continue;
     }
+    else
+      bNoMsg = false;
 
     if (pMsg->IsType(CDVDMsg::GENERAL_SYNCHRONIZE))
     {
@@ -531,13 +554,15 @@ CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo::Process GENERAL_FLUSH about to m_pVid
 
     if (pMsg->IsType(CDVDMsg::GENERAL_EOF))
     {
+// TODO: seeks can generate erroneous EOF it seems - should we cater for this here or try to fix the dvdplayer or both
 CLog::Log(LOGDEBUG, "ASB: DVDPlayerVideo::Process bStreamEOF message");
       bStreamEOF = true;
+      bNoMsg = true;
     }
 
-    if (pMsg->IsType(CDVDMsg::DEMUXER_PACKET) || bStreamEOF)
+    if (pMsg->IsType(CDVDMsg::DEMUXER_PACKET) || bNoMsg)
     {
-      int bPacket = pMsg->IsType(CDVDMsg::DEMUXER_PACKET) ? true : false;
+      int bPacket = bNoMsg ? false : true;
       bRequestDrop = false; //reset
       DemuxPacket* pPacket;
       bool bPacketDrop;
@@ -565,12 +590,14 @@ CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo !bPacket about to deliver to m_pVideoC
       }
       else
       {
+        bStreamEOF = false;
         pPacket = ((CDVDMsgDemuxerPacket*)pMsg)->GetPacket();
         bPacketDrop     = ((CDVDMsgDemuxerPacket*)pMsg)->GetPacketDrop();
 
         if (m_stalled)
         {
-          CLog::Log(LOGINFO, "CDVDPlayerVideo - Stillframe left, switching to normal playback");
+          if (m_started)
+             CLog::Log(LOGINFO, "CDVDPlayerVideo - Stillframe left, switching to normal playback");
           m_stalled = false;
 
           //don't allow the first frames after a still to be dropped
@@ -652,6 +679,7 @@ CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo m_pVideoCodec->Decode returned: %i", i
 
       // loop trying to get the packet decoded, or drain decoder while no error and decoder is not asking for more data
       // or decoder is drained, or after a timeout of say 500ms?
+      bool bResChange = false;
       while (!m_bStop)
       {
         if (iDecoderState & (VC_NOTDECODERDROPPED | VC_DROPPED))
@@ -684,9 +712,9 @@ CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo m_pVideoCodec->Decode returned: %i", i
         bRequestDrop = false;
 
         // if decoder was flushed, we need to seek back again to resume rendering
-        if (iDecoderState & VC_FLUSHED)
+        if (iDecoderState & VC_FLUSHED || bResChange)
         {
-// TODO: pause player, and look to output the packet after the one that was last displayed 
+// TODO: pause player, and look to output (not drop) the packet after the one that was last displayed 
           CLog::Log(LOGDEBUG, "CDVDPlayerVideo - video decoder was flushed");
           while(!m_packets.empty())
           {
@@ -699,11 +727,14 @@ CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo m_pVideoCodec->Decode returned: %i", i
             m_messageQueue.Put(msg, iPriority + 10);
           }
 
+          if (!bResChange)
+          {
 CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo::Process iDecoderState & VC_FLUSHED about to m_pVideoOutput->Reset()");
-          m_pVideoOutput->Reset();
+             m_pVideoOutput->Reset();
+          }
           m_pVideoCodec->Reset();
-          m_packets.clear();
           CLog::Log(LOGNOTICE, "-------------------- video flushed");
+          m_packets.clear();
           break;
         }
 
@@ -744,9 +775,8 @@ CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo hurry up m_fLastDecodedPictureClock: %
                (iDropDirective & DC_OUTPUT) )
              toMsg.bDrop = true;
 
-          //TODO: no need to deliver frame time in msg as output thread should know it
-          //toMsg.fFrameTime = frametime;
           toMsg.iSpeed = m_speed;
+          toMsg.bPlayerStarted = m_started;
 
           if (!toMsg.bDrop)
           {
@@ -761,7 +791,6 @@ CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo about to deliver to output msg for VC_
           m_pVideoOutput->SendMessage(toMsg);
         }
 
-        // TODO: we want to get EOS_CONFIGURE messages immediately at start (while output thread should block until reconfigured)
         FromOutputMessage fromMsg;
         bool msgwait = false;
         if (!m_started && (iDecoderState & VC_PICTURE)) //first picture output we wait for a reply to get reconfigured early
@@ -789,7 +818,6 @@ CLog::Log(LOGNOTICE, "ASB: CDVDPlayerVideo setting msgwait");
                                                                     m_output.height,
                                                                     m_output.framerate,
                                                                     m_formatstr.c_str());
-             bool bResChange;
              if(!g_renderManager.Configure(m_output.width,
                                            m_output.height,
                                            m_output.dwidth,
@@ -808,18 +836,16 @@ CLog::Log(LOGNOTICE, "ASB: CDVDPlayerVideo setting msgwait");
                 m_pVideoOutput->Reset();
                 m_pVideoOutput->Dispose();
                 m_pVideoCodec->HwFreeResources();
-                iDecoderState = VC_FLUSHED;
                 CLog::Log(LOGNOTICE,"CDVDPlayerVideo::Process - freed hw resources");
                 g_application.m_pPlayer->PauseRefreshChanging();
                 g_renderManager.SetReconfigured();
                 SetRefreshChanging(true);
-                //break;
-                continue;
+                continue; // to get processing from packet buffer - this will push previous messages at higher prio onto msgq, 
              }
              else
              {
                 g_renderManager.SetReconfigured();
-CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo::Process iDecoderState & VC_FLUSHED about to m_pVideoOutput->Reset()");
+CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo::Process EOS_CONFIGURE !bResChange about to m_pVideoOutput->Reset(true)");
                 m_pVideoOutput->Reset(true);
              }
            } //EOS_CONFIGURE
@@ -1433,6 +1459,7 @@ void CDVDPlayerVideo::ResumeAfterRefreshChange()
 
   SetRefreshChanging(false);
 
+//TODO: surely we should set previous speed - not just normal speed?
   if(m_messageQueue.IsInited())
     m_messageQueue.Put( new CDVDMsgInt(CDVDMsg::PLAYER_SETSPEED, DVD_PLAYSPEED_NORMAL), 21 );
   else

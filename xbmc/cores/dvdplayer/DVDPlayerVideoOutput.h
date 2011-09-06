@@ -36,15 +36,15 @@ struct ToOutputMessage
 {
   ToOutputMessage()
   {
-    fFrameTime = 0;
+    //fFrameTime = 0;
     bDrop = false;
-    bNotToSkip = false;
+    bPlayerStarted = false;
     bLastPic = false;
     iSpeed = 0;
   };
-  double fFrameTime;
+  //double fFrameTime;
   bool bDrop;
-  bool bNotToSkip;
+  bool bPlayerStarted;
   bool bLastPic;
   int iSpeed;
 };
