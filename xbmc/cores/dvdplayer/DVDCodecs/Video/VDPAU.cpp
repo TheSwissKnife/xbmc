@@ -1969,23 +1969,23 @@ int CVDPAU::Decode(AVCodecContext *avctx, AVFrame *pFrame, bool bDrain)
     {
       if (bDrain)
       {
-         // TODO: improve mixer drain logic so that it occurs if usedPics+msgs==0 for say 50ms and asked to drain throughout
-         if (usedPics == 0 && msgs == 0 && prevNotEmpty && iter > 100) 
-         {
-            CSingleLock lock(m_mixerSec);
-            m_mixerCmd |= MIXER_CMD_DRAIN;
-            lock.Leave();
-            m_msgSignal.Set();
-            iter = 0; //reset
-            prevNotEmpty = false;
-         }
-         if (iter < 1000)
-         {
-            if (!(usedPics == 0 && msgs == 0))
-               prevNotEmpty = true;
-            usleep(100);
-            continue;
-         }
+        // TODO: improve mixer drain logic so that it occurs if usedPics+msgs==0 for say 50ms and asked to drain throughout
+        if (usedPics == 0 && msgs == 0 && prevNotEmpty && iter > 100)
+        {
+          CSingleLock lock(m_mixerSec);
+          m_mixerCmd |= MIXER_CMD_DRAIN;
+          lock.Leave();
+          m_msgSignal.Set();
+          iter = 0; //reset
+          prevNotEmpty = false;
+        }
+        if (iter < 1000)
+        {
+          if (!(usedPics == 0 && msgs == 0))
+            prevNotEmpty = true;
+          usleep(100);
+          continue;
+        }
       }
       else if (iter < 100)
       {
@@ -2450,7 +2450,6 @@ void CVDPAU::Process()
           break;
         }
         outPicLock.Leave();
-//CLog::Log(LOGDEBUG,"ASB: CVDPAU::Process done outPicLock.Leave() m_freeOutPic.size(): %i m_usedOutPic.size(): %i totalAvailableOutputSurfaces: %i", m_freeOutPic.size(), m_usedOutPic.size(), totalAvailableOutputSurfaces); 
         Sleep(1);
       }
       if (!outPic)

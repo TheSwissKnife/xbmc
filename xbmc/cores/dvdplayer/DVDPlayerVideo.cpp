@@ -554,8 +554,8 @@ CLog::Log(LOGDEBUG, "ASB: DVDPlayerVideo::Process bStreamEOF message");
       // if we have not got started yet we want to get first picture to hurry up so that we can get configured earlier
       // or if previous run considered we need to hurry up or if we are at EOF then we request decode to hurry (not drop)
       // TODO: temp disabled until fixed in vdpau
-//      if (!m_started || bStreamEOF || bHurryUpDecode)
-//         iDecoderHint |= VC_HINT_HURRYUP;
+      if (!m_started || bStreamEOF || bHurryUpDecode)
+         iDecoderHint |= VC_HINT_HURRYUP;
       bHurryUpDecode = false; //reset
 
       // switch off any decoder post processing for ff/rw
@@ -716,7 +716,7 @@ CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo !bPacket about to deliver to m_pVideoC
           break;
         }
 
-        // try to hurry the decoder up for next call if playing at nomal speed and we haven't been given a picture in a while (1.75 * frametime)
+        // try to hurry the decoder up for next call if playing at normal speed and we haven't been given a picture in a while (1.75 * frametime)
         double fDecodedPictureClock = CDVDClock::GetAbsoluteClock(true);
         if (m_fLastDecodedPictureClock != DVD_NOPTS_VALUE && 
             m_fPrevLastDecodedPictureClock != DVD_NOPTS_VALUE && 
