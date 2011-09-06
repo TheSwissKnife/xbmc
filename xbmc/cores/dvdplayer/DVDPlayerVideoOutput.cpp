@@ -182,9 +182,9 @@ void CDVDPlayerVideoOutput::Process()
   while (!m_bStop)
   {
     mLock.Enter();
-    bMsg = m_toOutputMessage.empty();
+    bMsg = !m_toOutputMessage.empty();
     mLock.Leave();
-    if (!m_configuring && (!bMsg || outputPrevPic || timeoutTryPic))
+    if (!m_configuring && (bMsg || outputPrevPic))
     {
       cLock.Enter();
       if (m_recover)
@@ -293,7 +293,7 @@ void CDVDPlayerVideoOutput::Process()
         if (!m_toMsgSignal.WaitMSec(100))
         {
           CLog::Log(LOGNOTICE,"CDVDPlayerVideoOutput::Process - timeout waiting for message");
-          timeoutTryPic = true;
+          timeoutTryPic = false;
         }
         else
           timeoutTryPic = false;
