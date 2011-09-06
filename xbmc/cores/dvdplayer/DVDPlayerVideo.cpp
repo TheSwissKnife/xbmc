@@ -1800,6 +1800,11 @@ int CDVDPlayerVideo::OutputPicture(const DVDVideoPicture* src, double pts, doubl
   if(pPicture->iDuration == 0.0)
      pPicture->iDuration = (double)DVD_TIME_BASE / framerate;
 
+//TODO: is this right? what happpens when iDuration has been set above to output frame rate?
+  if (pPicture->iRepeatPicture)
+     pPicture->iDuration *= pPicture->iRepeatPicture + 1;
+
+
   if (pPicture->iFlags & DVP_FLAG_DROPPED)
   {
 CLog::Log(LOGDEBUG,"ASB: OutputPicture pPicture->iFlags & DVP_FLAG_DROPPED DiscardPicture");
