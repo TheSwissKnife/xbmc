@@ -170,10 +170,10 @@ void CDVDPlayerVideoOutput::Process()
   mLock.Leave();
   CSingleLock cLock(m_criticalSection);
   cLock.Leave();
-  bool started = false;
   int msgSpeed = 0;
   bool outputPrevPic = false;
-  bool timeoutTryPic = false;
+  bool bTimeoutTryPic = false;
+  bool bPlayerStarted = false;
   bool bMsg = false;
   double overlayDelay = m_pVideoPlayer->GetSubtitleDelay();
   double videoDelay = m_pVideoPlayer->GetDelay();
@@ -184,7 +184,7 @@ void CDVDPlayerVideoOutput::Process()
     mLock.Enter();
     bMsg = !m_toOutputMessage.empty();
     mLock.Leave();
-    if (!m_configuring && (bMsg || outputPrevPic || timeoutTryPic))
+    if (!m_configuring && (bMsg || outputPrevPic || bTimeoutTryPic))
     {
       cLock.Enter();
       if (m_recover)
@@ -196,15 +196,16 @@ void CDVDPlayerVideoOutput::Process()
 
       bool newPic = false;
       bool lastPic = false;
-      bool drop = false;
+      bool bDrop = false;
       if (!outputPrevPic && bMsg) // then process the message
       {
         mLock.Enter();
         ToOutputMessage toMsg = m_toOutputMessage.front();
         m_toOutputMessage.pop();
-        drop = toMsg.bDrop;
+        bDrop = toMsg.bDrop;
         lastPic = toMsg.bLastPic;
         msgSpeed = toMsg.iSpeed;
+        bPlayerStarted = toMsg.bPlayerStarted;
         mLock.Leave();
         //TODO: think about what it means to be passed a msg speed of zero otherwise - I think we should ignore and use previous?
         newSpeed = msgSpeed;
@@ -213,7 +214,7 @@ void CDVDPlayerVideoOutput::Process()
       if (lastPic)
       {
           // ignore lastPic msg if we have no last pic that we output
-          if (!started || !(m_picture.iFlags & DVP_FLAG_ALLOCATED))
+          if (!bPlayerStarted || !(m_picture.iFlags & DVP_FLAG_ALLOCATED))
              lastPic = false;
       }
       else if (outputPrevPic)
@@ -225,10 +226,10 @@ void CDVDPlayerVideoOutput::Process()
       else
       {  // we got a msg informing of a pic available or we timed-out waiting 
          // and will try to get the pic anyway (assuming previous speed and no drop)
-        newPic = GetPicture(drop);
+        newPic = GetPicture(bDrop);
       }
 
-      timeoutTryPic = false; //reset
+      bTimeoutTryPic = false; //reset
 
       if (newPic || lastPic || outputPrevPic) //we have something to do
       {
@@ -245,7 +246,7 @@ void CDVDPlayerVideoOutput::Process()
         {
           // output with speed of zero to force render asap
           int speed = 0;
-          if (started)
+          if (bPlayerStarted)
              speed = newSpeed;
           double pts = GetPts();
           // call ProcessOverlays here even if no newPic
@@ -254,10 +255,9 @@ void CDVDPlayerVideoOutput::Process()
           if (newPic || outputPrevPic)
           {
              iResult = m_pVideoPlayer->OutputPicture(&m_picture, pts, videoDelay, speed);
-             if (!(iResult & (EOS_DROPPED | EOS_ABORT)) && (!started))
+             if (!(iResult & (EOS_DROPPED | EOS_ABORT)) && (!bPlayerStarted))
              {
                 iResult |= EOS_STARTED;
-                started = true;
              }
              if (outputPrevPic)
                 outputPrevPic = false;
@@ -289,27 +289,27 @@ void CDVDPlayerVideoOutput::Process()
     {
       // waiting for a VC_PICTURE message or a finished configuring state
       //TODO: decide how to best deal with timeouts here in terms of possibly having missed a msg event
-      if (started && !m_configuring)
+      if (bPlayerStarted && !m_configuring)
       {
         if (!m_toMsgSignal.WaitMSec(100))
         {
           CLog::Log(LOGNOTICE,"CDVDPlayerVideoOutput::Process - timeout waiting for message");
-          timeoutTryPic = false;
+          bTimeoutTryPic = false;
         }
         else
-          timeoutTryPic = false;
+          bTimeoutTryPic = false;
       }
       else if (!m_toMsgSignal.WaitMSec(1000))
       {
-        //TODO: maybe set timeoutTryPic here with some better logic eg cumulative timeout?
-        if (!started)
-           timeoutTryPic = false;
+        //TODO: maybe set bTimeoutTryPic here with some better logic eg cumulative timeout?
+        if (!bPlayerStarted)
+           bTimeoutTryPic = false;
         else
-           timeoutTryPic = false;
-        CLog::Log(LOGNOTICE,"CDVDPlayerVideoOutput::Process - timeout waiting for message (configuring: %i started: %i)", (int)m_configuring, (int)started);
+           bTimeoutTryPic = false;
+        CLog::Log(LOGNOTICE,"CDVDPlayerVideoOutput::Process - timeout waiting for message (configuring: %i bPlayerStarted: %i)", (int)m_configuring, (int)bPlayerStarted);
       }
       else
-        timeoutTryPic = false;
+        bTimeoutTryPic = false;
     }
   }
   DestroyGlxContext();
