@@ -362,7 +362,7 @@ void CDVDPlayerVideo::Process()
     int iPriority = (m_speed == DVD_PLAYSPEED_PAUSE && m_started) ? 1 : 0;
     if (GetRefreshChanging())
       iPriority = 20;
-    if (!bFreeDecoderBuffer)
+    else if (!bFreeDecoderBuffer)
     {
       iPriority = 1;
       iQueueTimeOut = 1;
@@ -383,7 +383,10 @@ void CDVDPlayerVideo::Process()
     //}
     ret = m_messageQueue.Get(&pMsg, iQueueTimeOut, iPriority);
 
-    //
+    // prevent from processing when waiting for change of refresh rate
+    if (GetRefreshChanging() && ret == MSGQ_TIMEOUT)
+      continue;
+
     if (ret == MSGQ_TIMEOUT)
     {
       if ((!bFreeDecoderBuffer) ||
@@ -724,10 +727,7 @@ CLog::Log(LOGDEBUG, "ASB: DVDPlayerVideo::Process bStreamEOF message");
             m_messageQueue.Put(msg, iPriority + 10);
           }
 
-          if (!bResChange)
-          {
-             m_pVideoOutput->Reset();
-          }
+          m_pVideoOutput->Reset();
           m_pVideoCodec->Reset();
           CLog::Log(LOGNOTICE, "-------------------- video flushed");
           m_packets.clear();
@@ -1466,9 +1466,13 @@ void CDVDPlayerVideo::ResumeAfterRefreshChange()
 
 //TODO: surely we should set previous speed - not just normal speed?
   if(m_messageQueue.IsInited())
+  {
     m_messageQueue.Put( new CDVDMsgInt(CDVDMsg::PLAYER_SETSPEED, DVD_PLAYSPEED_NORMAL), 21 );
+  }
   else
+  {
     m_speed = DVD_PLAYSPEED_NORMAL;
+  }
 }
 
 void CDVDPlayerVideo::StepFrame()

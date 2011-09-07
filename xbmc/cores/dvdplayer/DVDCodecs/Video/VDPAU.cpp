@@ -1309,6 +1309,8 @@ bool CVDPAU::ConfigOutputMethod(AVCodecContext *avctx, AVFrame *pFrame)
       m_freeOutPic.push_back(&m_allOutPic[i]);
     }
 
+    m_lastReportedReadyPic = NULL;
+
     m_vdpauOutputMethod = OUTPUT_GL_INTEROP_YUV;
   }
   // RGB config for pixmap and gl interop with vdpau deinterlacing
