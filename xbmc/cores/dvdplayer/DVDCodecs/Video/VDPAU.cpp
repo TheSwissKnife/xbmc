@@ -1700,6 +1700,10 @@ int CVDPAU::Check(AVCodecContext* avctx)
 bool CVDPAU::QueueIsFull(bool wait /* = false */)
 {
   CStopWatch timer;
+
+  if (m_vdpauOutputMethod == OUTPUT_NONE)
+    return false;
+
   int remainingTime = 0;
   if (wait)
     remainingTime = 100;
