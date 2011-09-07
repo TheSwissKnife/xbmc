@@ -1810,10 +1810,15 @@ int CDVDPlayerVideo::OutputPicture(DVDVideoPicture* pPicture, double pts, double
 //TODO: consider whether we should always update iDuration to frametime regardless
   if(pPicture->iDuration == 0.0)
      pPicture->iDuration = (double)DVD_TIME_BASE / framerate;
+  
+//temporary
+  double prevDur = pPicture->iDuration;
 
 //TODO: is this right? what happpens when iDuration has been set above to output frame rate?
   if (pPicture->iRepeatPicture)
      pPicture->iDuration *= pPicture->iRepeatPicture + 1;
+  if (prevDur != (double)DVD_TIME_BASE / framerate)
+CLog::Log(LOGDEBUG,"ASB: OutputPicture pPicture->iDuration originally: %f calcualted frame duration: %f", prevDur, (double)DVD_TIME_BASE / framerate);
 
 
   if (pPicture->iFlags & DVP_FLAG_DROPPED)

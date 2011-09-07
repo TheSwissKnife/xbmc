@@ -682,10 +682,12 @@ void CDVDPlayerAudio::HandleSyncError(double duration)
   double clock = m_pClock->GetClock();
   double error = m_ptsOutput.Current() - clock;
   int64_t now;
+      CLog::Log(LOGDEBUG, "CDVDPlayerAudio:: now: %"PRId64" clock: %f m_ptsOutput.Current(): %f error: %f", CurrentHostCounter(), clock, m_ptsOutput.Current(), error);
 
   //if( fabs(error) > DVD_MSEC_TO_TIME(100) || m_syncclock )
   //audio based clock sync is bad idea for smooth video
-  if( fabs(error) > DVD_MSEC_TO_TIME(500) )
+  //if( fabs(error) > DVD_MSEC_TO_TIME(500) )
+  if( fabs(error) > DVD_MSEC_TO_TIME(5000) )
   {
     m_pClock->Discontinuity(clock+error);
     if(m_speed == DVD_PLAYSPEED_NORMAL)

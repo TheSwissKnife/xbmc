@@ -283,6 +283,7 @@ CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideoOutput::Process m_fromOutputMessage.pus
 
         // guess next frame pts. iDuration is always valid
         // required for pics with no pts value
+        //TODO: m_picture.iDuration will not be updated if OutputPicture is used to fix it and has changed to const pic
         if (!outputPrevPic && newSpeed != 0)
            SetPts(GetPts() + m_picture.iDuration * newSpeed / abs(newSpeed));
       }

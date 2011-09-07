@@ -3199,7 +3199,10 @@ void CDVDPlayer::FlushBuffers(bool queued, double pts, bool accurate)
     }
 
     if(pts != DVD_NOPTS_VALUE)
+{
+CLog::Log(LOGDEBUG, "ASB: CDVDPlayer::FlushBuffers m_clock.Discontinuity(%f)", pts);
       m_clock.Discontinuity(pts);
+}
     UpdatePlayState(0);
   }
 }
