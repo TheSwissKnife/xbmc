@@ -3679,8 +3679,6 @@ bool CDVDPlayer::GetCurrentSubtitle(CStdString& strSubtitle)
   
  if (!strSubtitle.IsEmpty())
  CLog::Log(LOGDEBUG, "ASB: CDVDPlayer::GetCurrentSubtitle pts: %f strSubtitle.IsEmpty(): %i strSubtitle: %s", pts, (int)strSubtitle.IsEmpty(), strSubtitle.c_str());
- else
- CLog::Log(LOGDEBUG, "ASB:ASB:  CDVDPlayer::GetCurrentSubtitle pts: %f strSubtitle.IsEmpty(): %i", pts, (int)strSubtitle.IsEmpty());
   return !strSubtitle.IsEmpty();
 }
 

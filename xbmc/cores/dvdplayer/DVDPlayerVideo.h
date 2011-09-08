@@ -109,6 +109,7 @@ public:
   int OutputPicture(const DVDVideoPicture* src, double pts, double delay, int playspeed);
   bool CheckRenderConfig(const DVDVideoPicture* src);
   void ResumeAfterRefreshChange();
+  double GetCorrectedPicturePts(double pts, double& frametime); // return pattern corrected video picture pts and calculated frametime
 
 #ifdef HAS_VIDEO_PLAYBACK
   int ProcessOverlays(DVDVideoPicture* pSource, double pts, double delay);
@@ -140,6 +141,8 @@ protected:
   void ResetDropInfo();
   void SetRefreshChanging(bool changing = true);
   bool GetRefreshChanging();
+  int GetPlaySpeed();
+  void SetPlaySpeed(int speed);
 
   void ProcessVideoUserData(DVDVideoUserData* pVideoUserData, double pts);
 
@@ -153,7 +156,7 @@ protected:
 //  int m_iDroppedRequest;
 
   void   ResetFrameRateCalc();
-  void   CalcFrameRate();
+  bool   CalcFrameRate(double& FrameRate);
 
   double m_fFrameRate;       //framerate of the video currently playing
   bool   m_bCalcFrameRate;  //if we should calculate the framerate from the timestamps
@@ -256,6 +259,7 @@ protected:
 
   CSharedSection m_frameRateSection; //guard framerate related changes
   CCriticalSection m_outputSection; //guard output struct related changes
+  CCriticalSection m_playerSection; //guard changes for variables shared by dvd player and video player threads
   CPullupCorrection m_pullupCorrection;
 
   std::list<DVDMessageListItem> m_packets;

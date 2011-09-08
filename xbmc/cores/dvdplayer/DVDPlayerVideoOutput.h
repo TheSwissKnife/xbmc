@@ -77,7 +77,7 @@ protected:
   void OnStartup();
   void OnExit();
   void Process();
-  bool GetPicture(bool drop = false);
+  bool GetPicture(double& pts, double& frametime, bool drop = false);
   bool RefreshGlxContext();
   bool DestroyGlxContext();
 

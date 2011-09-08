@@ -181,6 +181,8 @@ void CDVDPlayerVideoOutput::Process()
   double overlayDelay = m_pVideoPlayer->GetSubtitleDelay();
   double videoDelay = m_pVideoPlayer->GetDelay();
   int newSpeed = 0;
+  double frametime = (double)DVD_TIME_BASE / m_pVideoPlayer->GetFrameRate();
+  double pts = DVD_NOPTS_VALUE;
 
   while (!m_bStop)
   {
@@ -214,22 +216,27 @@ void CDVDPlayerVideoOutput::Process()
         newSpeed = msgSpeed;
       }
 
+      //TODO: change lastPic message concept so that output thread does not require any player message to drive overlays
+      // - then no need for SetPts() etc
       if (lastPic)
       {
           // ignore lastPic msg if we have no last pic that we output
+          //TODO: move allocated pic check to a function to keep this loop clean
           if (!bPlayerStarted || !(m_picture.iFlags & DVP_FLAG_ALLOCATED))
              lastPic = false;
       }
       else if (outputPrevPic)
       {
           // ignore outputPrevPic msg if we have no allocted pic that we can output
+          //TODO: move allocated pic check to a function to keep this loop clean
           if (!(m_picture.iFlags & DVP_FLAG_ALLOCATED))
              outputPrevPic = false;
       }
       else
       {  // we got a msg informing of a pic available or we timed-out waiting 
          // and will try to get the pic anyway (assuming previous speed and no drop)
-        newPic = GetPicture(bDrop);
+        newPic = GetPicture(pts, frametime, bDrop);
+        SetPts(pts); //also set to member var for now TODO: revisit
       }
 
       bTimeoutTryPic = false; //reset
@@ -237,6 +244,8 @@ void CDVDPlayerVideoOutput::Process()
       if (newPic || lastPic || outputPrevPic) //we have something to do
       {
         int iResult = 0;
+        pts = GetPts(); //TODO: revisit this later
+
         // only configure output after we got a new picture from decoder
         if (newPic && m_pVideoPlayer->CheckRenderConfig(&m_picture))
         {
@@ -251,7 +260,6 @@ void CDVDPlayerVideoOutput::Process()
           int speed = 0;
           if (bPlayerStarted)
              speed = newSpeed;
-          double pts = GetPts();
           // call ProcessOverlays here even if no newPic
           m_pVideoPlayer->ProcessOverlays(&m_picture, pts, overlayDelay);
  
@@ -267,7 +275,7 @@ void CDVDPlayerVideoOutput::Process()
           }
         }
 
-        if (iResult & (EOS_CONFIGURE | EOS_DROPPED | EOS_ABORT | EOS_STARTED))
+        if (iResult)
         {
            FromOutputMessage fromMsg;
            fromMsg.iResult = iResult;
@@ -282,16 +290,21 @@ void CDVDPlayerVideoOutput::Process()
           g_application.NewFrame();
         }
 
-        // guess next frame pts. iDuration is always valid
-        // required for pics with no pts value
-        if (!outputPrevPic && newSpeed != 0)
-           SetPts(GetPts() + m_picture.iDuration * newSpeed / abs(newSpeed));
+        // guess next frame pts
+        // required for future pics with no pts value
+        if (!outputPrevPic && newSpeed != 0 && pts != DVD_NOPTS_VALUE)
+        {
+           pts = pts + frametime * newSpeed / abs(newSpeed);
+           SetPts(pts);  //TODO: revisit
+        }
       }
     }
     else
     {
       // waiting for a VC_PICTURE message or a finished configuring state
       //TODO: decide how to best deal with timeouts here in terms of possibly having missed a msg event
+      //TODO: have another state of "draining" as initiated by player message when player is hard draining
+      // - with a reply receipt message so that player can know all pics are processed
       if (bPlayerStarted && !m_configuring)
       {
         if (!m_toMsgSignal.WaitMSec(100))
@@ -318,7 +331,9 @@ void CDVDPlayerVideoOutput::Process()
   DestroyGlxContext();
 }
 
-bool CDVDPlayerVideoOutput::GetPicture(bool drop /* = false*/)
+// pts input as estimated pts for this pic and output as the corrected pts (which should also be in m_picture.pts)
+// frametime is output as the frame duration 
+bool CDVDPlayerVideoOutput::GetPicture(double& pts, double& frametime, bool drop /* = false*/)
 {
   bool bReturn = false;
 
@@ -332,19 +347,15 @@ bool CDVDPlayerVideoOutput::GetPicture(bool drop /* = false*/)
   {
     sPostProcessType.clear();
 
-//    if(m_picture.iDuration == 0.0)
-//      m_picture.iDuration = toMsg.fFrameTime;
-
-//    if(toMsg.bDrop)
-//      m_picture.iFlags |= DVP_FLAG_DROPPED;
     if (drop)
        m_picture.iFlags |= DVP_FLAG_DROPPED;
 
     // validate picture timing,
-    // if both dts/pts invalid, use pts calulated from picture.iDuration
-    // if pts invalid use dts, else use picture.pts as passed
-    if (m_picture.dts == DVD_NOPTS_VALUE && picture.pts == DVD_NOPTS_VALUE)
-      m_picture.pts = GetPts();
+    // if both pts invalid, use pts calculated from previous pts and iDuration
+    // if still invalid use dts, else use picture.pts as passed
+    //if (m_picture.dts == DVD_NOPTS_VALUE && picture.pts == DVD_NOPTS_VALUE)
+    if (m_picture.pts == DVD_NOPTS_VALUE)
+      m_picture.pts = pts;
     else if (m_picture.pts == DVD_NOPTS_VALUE)
       m_picture.pts = m_picture.dts;
 
@@ -382,17 +393,32 @@ bool CDVDPlayerVideoOutput::GetPicture(bool drop /* = false*/)
     /* if frame has a pts (usually originiating from demux packet), use that */
     if(m_picture.pts != DVD_NOPTS_VALUE)
     {
-      SetPts(m_picture.pts);
+      //SetPts(m_picture.pts);
+      m_picture.pts = m_pVideoPlayer->GetCorrectedPicturePts(m_picture.pts, frametime);
+      pts = m_picture.pts;
+    }
+    else
+      frametime = (double)DVD_TIME_BASE / m_pVideoPlayer->GetFrameRate();
+
+//TODO: consider whether we should always update iDuration to frametime regardless
+// - perhaps should always set it once we think we have a good calculation on frametime?
+    bool bDurationCalculated = false;
+    if(m_picture.iDuration == 0.0)
+    {
+      bDurationCalculated = true;
+      m_picture.iDuration = frametime;
     }
 
-//    if (m_picture.iRepeatPicture)
-//      m_picture.iDuration *= m_picture.iRepeatPicture + 1;
+    if (!bDurationCalculated && m_picture.iRepeatPicture)
+      m_picture.iDuration *= m_picture.iRepeatPicture + 1;
 
+    frametime = m_picture.iDuration; //make them consistent at least
     bReturn = true;
   }
   else
   {
     CLog::Log(LOGWARNING, "CDVDPlayerVideoOutput::GetPicture - error getting videoPicture.");
+    frametime = (double)DVD_TIME_BASE / m_pVideoPlayer->GetFrameRate();
 //    CSingleLock lock(m_criticalSection);
 //    m_recover = true;
 //    lock.Leave();
