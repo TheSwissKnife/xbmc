@@ -1699,47 +1699,39 @@ int CVDPAU::Check(AVCodecContext* avctx)
 
 bool CVDPAU::QueueIsFull(bool wait /* = false */)
 {
-  CStopWatch timer;
-
   if (m_vdpauOutputMethod == OUTPUT_NONE)
     return false;
 
-  int remainingTime = 0;
-  if (wait)
-    remainingTime = 100;
-
-  timer.StartZero();
-  m_queueSignal.Reset();
-  do
+  if (m_vdpauOutputMethod == OUTPUT_GL_INTEROP_YUV)
   {
-    if (m_vdpauOutputMethod == OUTPUT_GL_INTEROP_YUV)
-    {
-      CSingleLock locku(m_outPicSec);
-       if (!m_freeOutPic.empty())
-         return false; // buffers are not full
-    }
-    else
-    {
-      // always ensure we have at least 1 free pic (ie assume full if only 1 freeOutPic) so that mixer cannot be starved
-      CSingleLock lockm(m_mixerSec);
-      int msgs = m_mixerMessages.size();
-      lockm.Leave();
-      CSingleLock locku(m_outPicSec);
-      int iFreePics = m_freeOutPic.size();
-      int iNotFreePics = m_outPicsNum - iFreePics;
-      locku.Leave();
+    CSingleLock locku(m_outPicSec);
+     if (!m_freeOutPic.empty())
+       return false; // buffers are not full
+  }
+  else
+  {
+    // always ensure we have at least 1 free pic (ie assume full if only 1 freeOutPic) so that mixer cannot be starved
+    CSingleLock lockm(m_mixerSec);
+    int msgs = m_mixerMessages.size();
+    lockm.Leave();
+    CSingleLock locku(m_outPicSec);
+    int iFreePics = m_freeOutPic.size();
+    int iNotFreePics = m_outPicsNum - iFreePics;
+    locku.Leave();
 
-      // assume for simplicity 2 output pics can come from one frame message if de-interlacing via mixer
-      // and that mixer-input can have 2 outstanding msgs inside it
-      int msgsFactor = m_bVdpauDeinterlacing ? 2 : 1;
+    // assume for simplicity 2 output pics can come from one frame message if de-interlacing via mixer
+    // and that mixer-input can have 2 outstanding msgs inside it
+    int msgsFactor = m_bVdpauDeinterlacing ? 2 : 1;
 
-      int estimatedPicQLength = iNotFreePics + (msgsFactor * (msgs + 2));
-      if (!(estimatedPicQLength >= MAX_PIC_Q_LENGTH || iFreePics < 2))
-        return false; // buffers are not full
-    }
-    m_queueSignal.WaitMSec(remainingTime);
-    remainingTime -= timer.GetElapsedMilliseconds();
-  } while (remainingTime > 0);
+    int estimatedPicQLength = iNotFreePics + (msgsFactor * (msgs + 2));
+    if (!(estimatedPicQLength >= MAX_PIC_Q_LENGTH || iFreePics < 2))
+      return false; // buffers are not full
+  }
+
+  // if we get an event assume there is work to do
+  if (wait && m_queueSignal.WaitMSec(100))
+    return false;
+
   return true;
 }
 
