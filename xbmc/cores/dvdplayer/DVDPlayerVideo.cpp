@@ -1602,10 +1602,11 @@ bool CDVDPlayerVideo::CheckRenderConfig(const DVDVideoPicture* src)
   DVDVideoPicture picture(*src);
   DVDVideoPicture* pPicture = &picture;
 
+  double framerate = GetFrameRate();
+
   CSingleLock lock(m_outputSection);
 
-#ifdef HAS_VIDEO_PLAYBACK
-  double framerate = GetFrameRate();
+//#ifdef HAS_VIDEO_PLAYBACK
   /* check so that our format or aspect has changed. if it has, reconfigure renderer */
   if (!g_renderManager.IsConfigured()
    || m_output.width != pPicture->iWidth
