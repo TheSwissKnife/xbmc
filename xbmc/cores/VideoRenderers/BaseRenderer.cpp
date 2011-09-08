@@ -44,6 +44,21 @@ CBaseRenderer::~CBaseRenderer()
 {
 }
 
+bool CBaseRenderer::CheckResolutionChange(float fps)
+{
+  bool bReturn(false);
+
+  RESOLUTION oldRes;
+  oldRes = m_resolution;
+  ChooseBestResolution(fps);
+  if (m_resolution != oldRes)
+    bReturn = true;
+
+  m_resolution = oldRes;
+
+  return bReturn;
+}
+
 void CBaseRenderer::ChooseBestResolution(float fps)
 {
   if (fps == 0.0) return;

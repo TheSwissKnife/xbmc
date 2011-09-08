@@ -53,8 +53,7 @@ CGraphicContext::CGraphicContext(void) :
   m_Resolution(RES_INVALID), 
   /*m_windowResolution,*/
   m_guiScaleX(1.0f), 
-  m_guiScaleY(1.0f),
-  m_bAllowSetResolution(true)
+  m_guiScaleY(1.0f)
   /*,m_cameras, */ 
   /*m_origins, */
   /*m_clipRegions,*/
@@ -321,9 +320,6 @@ bool CGraphicContext::IsValidResolution(RESOLUTION res)
 
 void CGraphicContext::SetVideoResolution(RESOLUTION res, bool forceUpdate)
 {
-  if (!m_bAllowSetResolution)
-    return;
-
   RESOLUTION lastRes = m_Resolution;
 
   // If the user asked us to guess, go with desktop

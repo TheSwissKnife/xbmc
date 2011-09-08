@@ -269,7 +269,7 @@ CStdString CXBMCRenderManager::GetVSyncState()
   return state;
 }
 
-bool CXBMCRenderManager::Configure(unsigned int width, unsigned int height, unsigned int d_width, unsigned int d_height, float fps, unsigned flags, bool &bResChange)
+bool CXBMCRenderManager::Configure(unsigned int width, unsigned int height, unsigned int d_width, unsigned int d_height, float fps, unsigned flags)
 {
   /* make sure any queued frame was fully presented */
   double timeout = m_presenttime + 0.1;
@@ -289,8 +289,6 @@ bool CXBMCRenderManager::Configure(unsigned int width, unsigned int height, unsi
     return false;
   }
 
-  RESOLUTION res = GetResolution();
-
   bool result = m_pRenderer->Configure(width, height, d_width, d_height, fps, flags);
   if(result)
   {
@@ -302,15 +300,12 @@ bool CXBMCRenderManager::Configure(unsigned int width, unsigned int height, unsi
     }
     m_pRenderer->Update(false);
     m_bIsStarted = true;
-//    m_bReconfigured = true;
+    m_bReconfigured = true;
     m_presentstep = PRESENT_IDLE;
     m_presentevent.Set();
 //    m_pClock = 0;
     m_bDrain = false;
-    g_graphicsContext.AllowSetResolution(false);
   }
-
-  bResChange = (res != m_pRenderer->GetResolution(true)) ? true : false;
 
   return result;
 }
@@ -441,12 +436,6 @@ void CXBMCRenderManager::UnInit()
   // TODO: we may also want to release the renderer here.
   if (m_pRenderer)
     m_pRenderer->UnInit();
-}
-
-void CXBMCRenderManager::SetReconfigured()
-{
-  m_bReconfigured = true;
-  g_graphicsContext.AllowSetResolution(true);
 }
 
 void CXBMCRenderManager::SetupScreenshot()
@@ -1241,4 +1230,14 @@ bool CXBMCRenderManager::Drain()
 
   g_application.NewFrame();
   return false;
+}
+
+bool CXBMCRenderManager::CheckResolutionChange(float fps)
+{
+  if(!m_pRenderer)
+  {
+    CLog::Log(LOGERROR, "%s called without a valid Renderer object", __FUNCTION__);
+    return false;
+  }
+  return m_pRenderer->CheckResolutionChange(fps);
 }

@@ -72,7 +72,7 @@ public:
   void SetViewMode(int iViewMode) { CSharedLock lock(m_sharedSection); if (m_pRenderer) m_pRenderer->SetViewMode(iViewMode); };
 
   // Functions called from mplayer
-  bool Configure(unsigned int width, unsigned int height, unsigned int d_width, unsigned int d_height, float fps, unsigned flags, bool &bResChange);
+  bool Configure(unsigned int width, unsigned int height, unsigned int d_width, unsigned int d_height, float fps, unsigned flags);
   bool IsConfigured();
 
   int AddVideoPicture(DVDVideoPicture& picture, double pts, double presenttime, int playspeed, bool vclockresync = false);
@@ -84,8 +84,8 @@ public:
   void UpdateDisplayInfo();
   unsigned int PreInit();
   void UnInit();
-  void SetReconfigured();
   bool Drain();
+  bool CheckResolutionChange(float fps);
 
   void AddOverlay(CDVDOverlay* o, double pts)
   {

@@ -828,6 +828,20 @@ CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo hurry up m_fLastDecodedPictureClock: %
              }
 
              CSingleLock lock(m_outputSection);
+
+             // check if resolution is going to change and clear down
+             // resources in this case
+             bResChange = g_renderManager.CheckResolutionChange(m_bFpsInvalid ? 0.0 : m_output.framerate);
+             if (bResChange)
+             {
+                m_pVideoOutput->Reset();
+                m_pVideoOutput->Dispose();
+                m_pVideoCodec->HwFreeResources();
+                CLog::Log(LOGNOTICE,"CDVDPlayerVideo::Process - freed hw resources");
+                g_application.m_pPlayer->PauseRefreshChanging();
+                SetRefreshChanging(true);
+             }
+
              CLog::Log(LOGDEBUG,"%s - change configuration. %dx%d. framerate: %4.2f. format: %s",__FUNCTION__,
                                                                     m_output.width,
                                                                     m_output.height,
@@ -838,8 +852,7 @@ CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo hurry up m_fLastDecodedPictureClock: %
                                             m_output.dwidth,
                                             m_output.dheight,
                                             m_bFpsInvalid ? 0.0 : m_output.framerate,
-                                            m_output.flags,
-                                            bResChange))
+                                            m_output.flags))
              {
                CLog::Log(LOGERROR, "%s - failed to configure renderer", __FUNCTION__);
                //TODO: what should we do now?
@@ -848,18 +861,10 @@ CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo hurry up m_fLastDecodedPictureClock: %
 
              if (bResChange)
              {
-                m_pVideoOutput->Reset();
-                m_pVideoOutput->Dispose();
-                m_pVideoCodec->HwFreeResources();
-                CLog::Log(LOGNOTICE,"CDVDPlayerVideo::Process - freed hw resources");
-                g_application.m_pPlayer->PauseRefreshChanging();
-                g_renderManager.SetReconfigured();
-                SetRefreshChanging(true);
                 continue; // to get processing from packet buffer - this will push previous messages at higher prio onto msgq, 
              }
              else
              {
-                g_renderManager.SetReconfigured();
                 m_pVideoOutput->Reset(true);
              }
 
@@ -910,7 +915,7 @@ CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo hurry up m_fLastDecodedPictureClock: %
         }
 
         if ( (bStreamEOF && (CDVDClock::GetAbsoluteClock(true) - m_fLastDecodedPictureClock < DVD_MSEC_TO_TIME(500))) ||
-            !(iDecoderState & VC_BUFFER) )
+             (!bStreamEOF && !(iDecoderState & VC_BUFFER)) )
         {
           // the decoder didn't want more data, so do a drain (hurry up) call with no input data
           iDecoderHint = VC_HINT_HURRYUP;
@@ -933,6 +938,7 @@ CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo hurry up m_fLastDecodedPictureClock: %
            {
               Sleep(1);
            }
+           bStreamEOF = false;
         }
         // if we are here we are not at EOF and decoder has requested more data, or we have timed out waiting after EOF
         // so we break to try to get more data from the videoQueue

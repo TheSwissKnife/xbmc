@@ -1971,7 +1971,7 @@ int CVDPAU::Decode(AVCodecContext *avctx, AVFrame *pFrame, bool bSoftDrain, bool
     //only don't enter here if previous wait timed out
     if (!(usedPics == 0 && msgs * msgsFactor >= MAX_PIC_Q_LENGTH - 1))
     {
-      if (bSoftDrain && m_picSignal.WaitMSec(200))
+      if (bSoftDrain && !bHardDrain && m_picSignal.WaitMSec(200))
         continue;
       else if (bHardDrain)
       {
@@ -2583,7 +2583,7 @@ void CVDPAU::GLFinish()
       glDeleteTextures(1, m_allOutPic[i].texture);
     }
   }
-  CLog::Log(LOGNOTICE, "CVDPAU::GLFinish: cleared up gl resources");
+  CLog::Log(LOGNOTICE, "CVDPAU::GLFinish: cleared down gl resources");
 }
 
 #ifdef GL_NV_vdpau_interop

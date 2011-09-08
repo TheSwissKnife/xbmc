@@ -83,6 +83,7 @@ public:
   RESOLUTION GetResolution(bool next = false) const;
   void GetVideoRect(CRect &source, CRect &dest);
   float GetAspectRatio() const;
+  bool       CheckResolutionChange(float fps);
 
 protected:
   void       ChooseBestResolution(float fps);

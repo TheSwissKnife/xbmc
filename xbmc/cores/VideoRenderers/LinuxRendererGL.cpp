@@ -823,15 +823,24 @@ int CLinuxRendererGL::GetNextRenderBufferIndex()
 
 void CLinuxRendererGL::ReleaseProcessor()
 {
-  m_bValidated = false;
+//  m_bValidated = false;
   // YV12 textures
+  CLog::Log(LOGNOTICE,"CLinuxRendererGL::ReleaseProcessor");
+#ifdef HAVE_LIBVDPAU
+  CVDPAU *vdpau = NULL;
+  bool bFinish(false);
   for (int i = 0; i < NUM_BUFFERS; ++i)
   {
-#ifdef HAVE_LIBVDPAU
     YUVBUFFER &buf = m_buffers[i];
+    if (buf.vdpau && !bFinish)
+    {
+      buf.vdpau->GLFinish();
+      bFinish = true;
+    }
     SAFE_RELEASE(buf.vdpau);
-#endif
   }
+#endif
+
 }
 
 unsigned int CLinuxRendererGL::PreInit()
