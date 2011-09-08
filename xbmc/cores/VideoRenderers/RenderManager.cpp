@@ -272,8 +272,8 @@ CStdString CXBMCRenderManager::GetVSyncState()
 bool CXBMCRenderManager::Configure(unsigned int width, unsigned int height, unsigned int d_width, unsigned int d_height, float fps, unsigned flags)
 {
   /* make sure any queued frame was fully presented */
-  double timeout = m_presenttime + 0.1;
-  while(m_presentstep != PRESENT_IDLE)
+  double timeout = m_presenttime + 0.2;
+  while(m_presentstep != PRESENT_IDLE && !Drain())
   {
     if(!m_presentevent.WaitMSec(100) && GetPresentTime() > timeout)
     {
