@@ -109,6 +109,7 @@ public:
   int OutputPicture(const DVDVideoPicture* src, double pts, double delay, int playspeed);
   bool CheckRenderConfig(const DVDVideoPicture* src);
   void ResumeAfterRefreshChange();
+  double GetCorrectedPicturePts(double pts, double& frametime); // return pattern corrected video picture pts and calculated frametime
 
 #ifdef HAS_VIDEO_PLAYBACK
   int ProcessOverlays(DVDVideoPicture* pSource, double pts, double delay);
@@ -155,7 +156,7 @@ protected:
 //  int m_iDroppedRequest;
 
   void   ResetFrameRateCalc();
-  void   CalcFrameRate();
+  bool   CalcFrameRate(double& FrameRate);
 
   double m_fFrameRate;       //framerate of the video currently playing
   bool   m_bCalcFrameRate;  //if we should calculate the framerate from the timestamps
