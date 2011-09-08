@@ -140,6 +140,8 @@ protected:
   void ResetDropInfo();
   void SetRefreshChanging(bool changing = true);
   bool GetRefreshChanging();
+  int GetPlaySpeed();
+  void SetPlaySpeed(int speed);
 
   void ProcessVideoUserData(DVDVideoUserData* pVideoUserData, double pts);
 
@@ -256,6 +258,7 @@ protected:
 
   CSharedSection m_frameRateSection; //guard framerate related changes
   CCriticalSection m_outputSection; //guard output struct related changes
+  CCriticalSection m_playerSection; //guard changes for variables shared by dvd player and video player threads
   CPullupCorrection m_pullupCorrection;
 
   std::list<DVDMessageListItem> m_packets;
