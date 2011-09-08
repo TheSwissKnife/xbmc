@@ -267,7 +267,7 @@ void CDVDPlayerVideoOutput::Process()
           }
         }
 
-        if (iResult & (EOS_CONFIGURE | EOS_DROPPED | EOS_ABORT | EOS_STARTED))
+        if (iResult)
         {
            FromOutputMessage fromMsg;
            fromMsg.iResult = iResult;
