@@ -32,21 +32,27 @@
 #include "settings/VideoSettings.h"
 #include <GL/glx.h>
 
+// different types of output message
+#define VOCMD_NEWPIC             0x1 //new picture from decoder is ready
+#define VOCMD_PROCESSOVERLAYONLY 0x2 //just process overlays
+#define VOCMD_FINISHSTREAM       0x4 //video player has finished stream
+#define VOCMD_DEALLOCPIC         0x8 //video player wishes current pic to be de-allocated 
+
 struct ToOutputMessage
 {
   ToOutputMessage()
   {
-    //fFrameTime = 0;
     bDrop = false;
     bPlayerStarted = false;
-    bLastPic = false;
     iSpeed = 0;
+    iCmd = VOCMD_NEWPIC;
+    fInterval = 0.0;
   };
-  //double fFrameTime;
-  bool bDrop;
-  bool bPlayerStarted;
-  bool bLastPic;
-  int iSpeed;
+  bool bDrop; //drop flag (eg drop the picture)
+  bool bPlayerStarted; //video player has reached started state
+  double fInterval; //interval in dvd time (eg for overlay freqeuncy)
+  int iCmd; //command type
+  int iSpeed; //video player play speed
 };
 
 struct FromOutputMessage
@@ -67,8 +73,8 @@ public:
   void Start();
   void Reset(bool resetConfigure = false);
   void Dispose();
-  bool SendMessage(ToOutputMessage &msg);
-  bool GetMessage(FromOutputMessage &msg, bool bWait);
+  bool SendMessage(ToOutputMessage &msg, int timeout = 0);
+  bool GetMessage(FromOutputMessage &msg, int timeout = 0);
   int GetMessageSize();
   void SetCodec(CDVDVideoCodec *codec);
   void SetPts(double pts);

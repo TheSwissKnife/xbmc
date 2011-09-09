@@ -102,10 +102,20 @@ void CDVDPlayerVideoOutput::OnExit()
   CLog::Log(LOGNOTICE, "CDVDPlayerVideoOutput::OnExit: Output Thread terminated");
 }
 
-bool CDVDPlayerVideoOutput::SendMessage(ToOutputMessage &msg)
+bool CDVDPlayerVideoOutput::SendMessage(ToOutputMessage &msg, int timeout /* = 0 */)
 {
+  CStopWatch timer;
+  if (timeout)
+     timer.StartZero();
+  while (timeout > 0 && m_bStop)
+  {
+     Sleep(1);
+     timeout -= timer.GetElapsedMilliseconds();
+  }
+
   if (m_bStop)
      return false;
+
   CSingleLock lock(m_msgSection);
   m_toOutputMessage.push(msg);
   lock.Leave();
@@ -120,19 +130,15 @@ int CDVDPlayerVideoOutput::GetMessageSize()
   return m_toOutputMessage.size();
 }
 
-bool CDVDPlayerVideoOutput::GetMessage(FromOutputMessage &msg, bool bWait)
+bool CDVDPlayerVideoOutput::GetMessage(FromOutputMessage &msg, int timeout /* = 0 */)
 {
   bool bReturn = false;
 
+  CStopWatch timer;
+  if (timeout > 0)
+     timer.StartZero();
   while (!m_bStop)
   {
-    if (bWait && !m_fromMsgSignal.WaitMSec(500))
-    {
-      CLog::Log(LOGWARNING, "CDVDPlayerVideoOutput::GetMessage - timed out");
-      // try to stop this getting stuck forever
-      return false;
-    }
-
     { CSingleLock lock(m_msgSection);
       if (!m_fromOutputMessage.empty())
       {
@@ -142,9 +148,15 @@ bool CDVDPlayerVideoOutput::GetMessage(FromOutputMessage &msg, bool bWait)
         break;
       }
     }
+    if (timeout > 0 && !m_fromMsgSignal.WaitMSec(timeout))
+    {
+      //CLog::Log(LOGWARNING, "CDVDPlayerVideoOutput::GetMessage - timed out");
+      return false;
+    }
 
-    if (!bWait)
+    if (timeout <= 0)
       break;
+    timeout -= timer.GetElapsedMilliseconds();
   }
 
   return bReturn;
@@ -173,23 +185,27 @@ void CDVDPlayerVideoOutput::Process()
   mLock.Leave();
   CSingleLock cLock(m_criticalSection);
   cLock.Leave();
-  int msgSpeed = 0;
-  bool outputPrevPic = false;
+  bool bOutputPrevPic = false;
   bool bTimeoutTryPic = false;
   bool bPlayerStarted = false;
   bool bMsg = false;
+  bool bOverlaysOnly = false;
+  bool bPlayerFinishStream = false;
   double overlayDelay = m_pVideoPlayer->GetSubtitleDelay();
   double videoDelay = m_pVideoPlayer->GetDelay();
-  int newSpeed = 0;
+  double overlayInterval;
+  int outputSpeed = 0;
   double frametime = (double)DVD_TIME_BASE / m_pVideoPlayer->GetFrameRate();
   double pts = DVD_NOPTS_VALUE;
+  double clock = CDVDClock::GetAbsoluteClock(true);
+  double lastOutputClock = clock; //init as if we just output
 
   while (!m_bStop)
   {
     mLock.Enter();
     bMsg = !m_toOutputMessage.empty();
     mLock.Leave();
-    if (!m_configuring && (bMsg || outputPrevPic || bTimeoutTryPic))
+    if (!m_configuring && (bMsg || bOutputPrevPic || bTimeoutTryPic || bOverlaysOnly))
     {
       cLock.Enter();
       if (m_recover)
@@ -199,79 +215,113 @@ void CDVDPlayerVideoOutput::Process()
       }
       cLock.Leave();
 
-      bool newPic = false;
-      bool lastPic = false;
-      bool bDrop = false;
-      if (!outputPrevPic && bMsg) // then process the message
+      bool bNewPic = false;
+      bool bPicDrop = false;
+      double interval;
+      int msgCmd = 0; 
+      int playerSpeed = 0;
+      if (!bOutputPrevPic && bMsg) // then process the message
       {
         mLock.Enter();
         ToOutputMessage toMsg = m_toOutputMessage.front();
         m_toOutputMessage.pop();
-        bDrop = toMsg.bDrop;
-        lastPic = toMsg.bLastPic;
-        msgSpeed = toMsg.iSpeed;
+        msgCmd = toMsg.iCmd;
+        bPicDrop = toMsg.bDrop;
+        interval = toMsg.fInterval;
+        playerSpeed = toMsg.iSpeed;
         bPlayerStarted = toMsg.bPlayerStarted;
         mLock.Leave();
-        //TODO: think about what it means to be passed a msg speed of zero otherwise - I think we should ignore and use previous?
-        newSpeed = msgSpeed;
+        // assume old speed during player pause speed, and if only change if player has started
+        // so that we before start we can first frame displayed quickly (user can more quickly see start frame)
+        if (playerSpeed != 0 && bPlayerStarted) //assume old speed during pause speed
+           outputSpeed = playerSpeed;
       }
 
-      //TODO: change lastPic message concept so that output thread does not require any player message to drive overlays
-      // - then no need for SetPts() etc
-      if (lastPic)
+      if (bOutputPrevPic && (!(m_picture.iFlags & DVP_FLAG_ALLOCATED)))
       {
-          // ignore lastPic msg if we have no last pic that we output
-          //TODO: move allocated pic check to a function to keep this loop clean
+          // ignore bOutputPrevPic state if unexpectedly we have no allocted pic that we can output
+          bOutputPrevPic = false;
+          continue;
+      }
+      else if (msgCmd == VOCMD_FINISHSTREAM)
+      { 
+          bPlayerFinishStream = true;
+          FromOutputMessage fromMsg;
+          fromMsg.iResult = EOS_QUIESCED;
+          mLock.Enter();
+          m_fromOutputMessage.push(fromMsg);
+          mLock.Leave();
+          m_fromMsgSignal.Set();
+          continue;
+      }
+      else if (msgCmd == VOCMD_DEALLOCPIC)
+      {
+          m_picture.iFlags &= ~DVP_FLAG_ALLOCATED;
+          continue;
+      }
+      else if (msgCmd == VOCMD_PROCESSOVERLAYONLY)
+      {
+          // ignore process-overlay only msg if we have no last pic that we output
+          //TODO: tell player if we could not start doing overlays?
           if (!bPlayerStarted || !(m_picture.iFlags & DVP_FLAG_ALLOCATED))
-             lastPic = false;
+             bOverlaysOnly = false;
+          else
+          {
+             bOverlaysOnly = true;
+             if (interval == 0.0)
+                overlayInterval = DVD_MSEC_TO_TIME(100);
+             else
+                overlayInterval = interval;
+          }
+          bPlayerFinishStream = false;
       }
-      else if (outputPrevPic)
-      {
-          // ignore outputPrevPic msg if we have no allocted pic that we can output
-          //TODO: move allocated pic check to a function to keep this loop clean
-          if (!(m_picture.iFlags & DVP_FLAG_ALLOCATED))
-             outputPrevPic = false;
-      }
-      else
+      else if (msgCmd == VOCMD_NEWPIC || bTimeoutTryPic)
       {  // we got a msg informing of a pic available or we timed-out waiting 
          // and will try to get the pic anyway (assuming previous speed and no drop)
-        newPic = GetPicture(pts, frametime, bDrop);
-        SetPts(pts); //also set to member var for now TODO: revisit
+        bNewPic = GetPicture(pts, frametime, bPicDrop);
+        if (bNewPic)
+        {
+           bOverlaysOnly = false;
+           bPlayerFinishStream = false;
+        }
       }
 
       bTimeoutTryPic = false; //reset
+      bool bOutputOverlays = false;
+      clock = CDVDClock::GetAbsoluteClock(true);
+      if (bOverlaysOnly)
+      {
+         if (clock - lastOutputClock >= overlayInterval)
+            bOutputOverlays = true;
+      }
 
-      if (newPic || lastPic || outputPrevPic) //we have something to do
+      if (bNewPic || bOutputOverlays || bOutputPrevPic) //we have something to output
       {
         int iResult = 0;
-        pts = GetPts(); //TODO: revisit this later
+        SetPts(pts); //allow other threads to know our pts
 
         // only configure output after we got a new picture from decoder
-        if (newPic && m_pVideoPlayer->CheckRenderConfig(&m_picture))
+        if (bNewPic && m_pVideoPlayer->CheckRenderConfig(&m_picture))
         {
           iResult = EOS_CONFIGURE;
           m_configuring = true;
-          outputPrevPic = true;
+          bOutputPrevPic = true;
         }
 
         if (!m_configuring)
         {
-          // output with speed of zero to force render asap
-          int speed = 0;
-          if (bPlayerStarted)
-             speed = newSpeed;
-          // call ProcessOverlays here even if no newPic
+          // call ProcessOverlays here even if no new Pic
           m_pVideoPlayer->ProcessOverlays(&m_picture, pts, overlayDelay);
  
-          if (newPic || outputPrevPic)
+          if (bNewPic || bOutputPrevPic)
           {
-             iResult = m_pVideoPlayer->OutputPicture(&m_picture, pts, videoDelay, speed);
+             iResult = m_pVideoPlayer->OutputPicture(&m_picture, pts, videoDelay, outputSpeed);
              if (!(iResult & (EOS_DROPPED | EOS_ABORT)) && (!bPlayerStarted))
              {
-                iResult |= EOS_STARTED;
+                iResult |= EOS_STARTED; //tell player we have started outputting
              }
-             if (outputPrevPic)
-                outputPrevPic = false;
+             if (bOutputPrevPic)
+                bOutputPrevPic = false;
           }
         }
 
@@ -292,41 +342,50 @@ void CDVDPlayerVideoOutput::Process()
 
         // guess next frame pts
         // required for future pics with no pts value
-        if (!outputPrevPic && newSpeed != 0 && pts != DVD_NOPTS_VALUE)
-        {
-           pts = pts + frametime * newSpeed / abs(newSpeed);
-           SetPts(pts);  //TODO: revisit
-        }
-      }
+        if (bNewPic && outputSpeed != 0 && pts != DVD_NOPTS_VALUE)
+           pts = pts + frametime * outputSpeed / abs(outputSpeed);
+        else if (bOutputOverlays && pts != DVD_NOPTS_VALUE)
+            pts += clock - lastOutputClock;
+
+        lastOutputClock = CDVDClock::GetAbsoluteClock(true);
+
+      } //end output section
+
     }
-    else
+    else //waiting section
     {
-      // waiting for a VC_PICTURE message or a finished configuring state
-      //TODO: decide how to best deal with timeouts here in terms of possibly having missed a msg event
-      //TODO: have another state of "draining" as initiated by player message when player is hard draining
-      // - with a reply receipt message so that player can know all pics are processed
-      if (bPlayerStarted && !m_configuring)
+
+      bTimeoutTryPic = false;
+      // we want to wait only say 5ms to loop back around to see if overlay output is due 
+      // (improve later if we need smoother overlays)
+      if (bOverlaysOnly)
+         m_toMsgSignal.WaitMSec(5);
+      else if (bPlayerFinishStream) //wait but no need to log timeouts as we expect to
+        m_toMsgSignal.WaitMSec(100);
+      else if (m_configuring || !bPlayerStarted)
       {
-        if (!m_toMsgSignal.WaitMSec(100))
+        // log timeout only after 5 seconds and set bTimeoutTryPic
+        m_toMsgSignal.WaitMSec(200);
+        clock = CDVDClock::GetAbsoluteClock(true);
+        if (clock - lastOutputClock > DVD_MSEC_TO_TIME(5000))
         {
-          CLog::Log(LOGNOTICE,"CDVDPlayerVideoOutput::Process - timeout waiting for message");
-          bTimeoutTryPic = false;
+          CLog::Log(LOGWARNING,"CDVDPlayerVideoOutput::Process - timeout waiting for message (configuring: %i bPlayerStarted: %i), forcing trypic", (int)m_configuring, (int)bPlayerStarted);
+          bTimeoutTryPic = true;
         }
-        else
-          bTimeoutTryPic = false;
       }
-      else if (!m_toMsgSignal.WaitMSec(1000))
+      else 
       {
-        //TODO: maybe set bTimeoutTryPic here with some better logic eg cumulative timeout?
-        if (!bPlayerStarted)
-           bTimeoutTryPic = false;
-        else
-           bTimeoutTryPic = false;
-        CLog::Log(LOGNOTICE,"CDVDPlayerVideoOutput::Process - timeout waiting for message (configuring: %i bPlayerStarted: %i)", (int)m_configuring, (int)bPlayerStarted);
+        // log timeout after 100ms and set bTimeoutTryPic after 1s
+        m_toMsgSignal.WaitMSec(100);
+        CLog::Log(LOGNOTICE,"CDVDPlayerVideoOutput::Process - timeout waiting for message");
+        clock = CDVDClock::GetAbsoluteClock(true);
+        if (clock - lastOutputClock > DVD_MSEC_TO_TIME(1000))
+        {
+          CLog::Log(LOGNOTICE,"CDVDPlayerVideoOutput::Process forcing trypic");
+          bTimeoutTryPic = true;
+        }
       }
-      else
-        bTimeoutTryPic = false;
-    }
+    } //end else waiting section
   }
   DestroyGlxContext();
 }
@@ -349,6 +408,8 @@ bool CDVDPlayerVideoOutput::GetPicture(double& pts, double& frametime, bool drop
 
     if (drop)
        m_picture.iFlags |= DVP_FLAG_DROPPED;
+
+    //TODO: store untouched pts and dts values in ring buffer of say 20 entries to allow decoder flush to make a better job of starting from correct place
 
     // validate picture timing,
     // if both pts invalid, use pts calculated from previous pts and iDuration
@@ -393,7 +454,7 @@ bool CDVDPlayerVideoOutput::GetPicture(double& pts, double& frametime, bool drop
     /* if frame has a pts (usually originiating from demux packet), use that */
     if(m_picture.pts != DVD_NOPTS_VALUE)
     {
-      //SetPts(m_picture.pts);
+      //SetPts(m_picture.pts);  
       m_picture.pts = m_pVideoPlayer->GetCorrectedPicturePts(m_picture.pts, frametime);
       pts = m_picture.pts;
     }

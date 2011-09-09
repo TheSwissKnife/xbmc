@@ -132,6 +132,7 @@ protected:
 #define EOS_DROPPED 2
 #define EOS_STARTED 4
 #define EOS_CONFIGURE 8
+#define EOS_QUIESCED 16
 
   void AutoCrop(DVDVideoPicture* pPicture);
   void AutoCrop(DVDVideoPicture *pPicture, RECT &crop);

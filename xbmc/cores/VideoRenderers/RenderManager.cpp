@@ -271,16 +271,10 @@ CStdString CXBMCRenderManager::GetVSyncState()
 
 bool CXBMCRenderManager::Configure(unsigned int width, unsigned int height, unsigned int d_width, unsigned int d_height, float fps, unsigned flags)
 {
+  // TODO: find a method to only do the a render drain if configure is changing resolution
   /* make sure any queued frame was fully presented */
-  double timeout = m_presenttime + 0.2;
-  while(m_presentstep != PRESENT_IDLE && !Drain())
-  {
-    if(!m_presentevent.WaitMSec(100) && GetPresentTime() > timeout)
-    {
+  if (!WaitDrained(500))
       CLog::Log(LOGWARNING, "CRenderManager::Configure - timeout waiting for previous frame");
-      break;
-    }
-  };
 
   CRetakeLock<CExclusiveLock> lock(m_sharedSection, false);
   if(!m_pRenderer)
@@ -304,7 +298,7 @@ bool CXBMCRenderManager::Configure(unsigned int width, unsigned int height, unsi
     m_presentstep = PRESENT_IDLE;
     m_presentevent.Set();
 //    m_pClock = 0;
-    m_bDrain = false;
+    //m_bDrain = false;
   }
 
   return result;
@@ -1218,18 +1212,22 @@ void CXBMCRenderManager::ReleaseProcessor()
   m_pRenderer->ReleaseProcessor();
 }
 
-bool CXBMCRenderManager::Drain()
+bool CXBMCRenderManager::WaitDrained(int timeout /* = 100 */)
 {
-  m_bDrain = true;
+  // timeout is in ms
   if(!m_pRenderer)
     return true;
 
-  int index = m_pRenderer->GetNextRenderBufferIndex();
-  if (index == -1)
-    return true;
-
-  g_application.NewFrame();
-  return false;
+  double time = GetPresentTime() + ((double)timeout / 1000);
+  while(m_presentstep != PRESENT_IDLE && m_pRenderer->GetNextRenderBufferIndex() != -1)
+  {
+    if(!m_presentevent.WaitMSec(20) && GetPresentTime() > time)
+    {
+      return false;
+    }
+    g_application.NewFrame(); //just in case application was not told about the render frames
+  };
+  return true;
 }
 
 bool CXBMCRenderManager::CheckResolutionChange(float fps)

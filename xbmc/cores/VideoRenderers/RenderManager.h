@@ -84,7 +84,7 @@ public:
   void UpdateDisplayInfo();
   unsigned int PreInit();
   void UnInit();
-  bool Drain();
+  bool WaitDrained(int timeout = 100);
   bool CheckResolutionChange(float fps);
 
   void AddOverlay(CDVDOverlay* o, double pts)

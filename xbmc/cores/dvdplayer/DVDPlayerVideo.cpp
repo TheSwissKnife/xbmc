@@ -411,19 +411,22 @@ void CDVDPlayerVideo::Process()
         if(m_started)
           CLog::Log(LOGINFO, "CDVDPlayerVideo - Stillframe detected, switching to forced %f fps", GetFrameRate());
         m_stalled = true;
-        pts+= frametime*4;
+        //pts+= frametime*4;
         // drive pts for overlays (still frames)
-        m_pVideoOutput->SetPts(m_pVideoOutput->GetPts() + frametime*4);
+        //m_pVideoOutput->SetPts(m_pVideoOutput->GetPts() + frametime*4);
       }
-      else //TODO: should this pts increment match iQueueTimeOut?
-        m_pVideoOutput->SetPts(m_pVideoOutput->GetPts() + frametime);
+      //else //TODO: should this pts increment match iQueueTimeOut?
+      //  m_pVideoOutput->SetPts(m_pVideoOutput->GetPts() + frametime);
 
-      if (m_started)
+      if (m_started && m_stalled) //for clarity
       {
+        // tell output to process overlays only every interval
         ToOutputMessage toMsg;
-        toMsg.bLastPic = true;
+        toMsg.iCmd = VOCMD_PROCESSOVERLAYONLY;
         toMsg.iSpeed = speed;
+        toMsg.fInterval = frametime * 2;
         toMsg.bPlayerStarted = m_started;
+        //TODO: consider error handling and msg delivery timeout here too
         m_pVideoOutput->SendMessage(toMsg);
       }
 
@@ -769,6 +772,8 @@ CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo hurry up m_fLastDecodedPictureClock: %
           if ( (bPacketDrop && !(iDecoderState & (VC_NOTDECODERDROPPED | VC_DROPPED))) ||
                (iDropDirective & DC_OUTPUT) )
              toMsg.bDrop = true;
+          else
+             toMsg.bDrop = false;
 
           toMsg.iSpeed = speed;
           toMsg.bPlayerStarted = m_started;
@@ -787,29 +792,31 @@ CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo hurry up m_fLastDecodedPictureClock: %
           {
              // try to reset output if this failed   
              m_pVideoOutput->Reset();
-             bMsgSent = m_pVideoOutput->SendMessage(toMsg);
+             bMsgSent = m_pVideoOutput->SendMessage(toMsg, 100);
              if (!bMsgSent)
              {
                CLog::Log(LOGERROR, "CDVDPlayerVideo failed to send message to output thread");
+               //TODO: at this stage we probably need to abort as there is something very wrong with output thread
              }
           }
         }
 
         FromOutputMessage fromMsg;
-        bool bMsgWait = false;
+        int iMsgWait = 0; //default is not wait for any reply message
         if (!m_started && bMsgSent) //first pic msg we wait for a reply to get reconfigured early
         {
-           bMsgWait = true;
+           iMsgWait = 100;
         }
-        bool bGotMsg = m_pVideoOutput->GetMessage(fromMsg, bMsgWait);
-        if (!bGotMsg && bMsgWait && bMsgSent)
+        bool bGotMsg = m_pVideoOutput->GetMessage(fromMsg, iMsgWait);
+        if (!bGotMsg && iMsgWait && bMsgSent)
         {
            CLog::Log(LOGNOTICE, "ASB: CDVDPlayerVideo m_pVideoOutput->GetMessage with wait failed, resetting output");
            m_pVideoOutput->Reset();
-           m_pVideoOutput->SendMessage(toMsg);
-           bGotMsg = m_pVideoOutput->GetMessage(fromMsg, true);
+           bMsgSent = m_pVideoOutput->SendMessage(toMsg, 100);
+           bGotMsg = m_pVideoOutput->GetMessage(fromMsg, 100);
            if (!bGotMsg)
               CLog::Log(LOGERROR, "CDVDPlayerVideo wait for output message failed");
+           //TODO: at this stage we probably need to abort if !m_started as there is something very wrong with output thread
         }
            
         int iResult = 0;
@@ -820,10 +827,10 @@ CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo hurry up m_fLastDecodedPictureClock: %
            if(iResult & EOS_CONFIGURE)
            {
              // drain render buffers
-             while (!g_renderManager.Drain())
-             {
-                Sleep(10);
-             }
+             //while (!g_renderManager.Drain())
+             //{
+             //   Sleep(10);
+             //}
 
              CSingleLock lock(m_outputSection);
 
@@ -899,16 +906,10 @@ CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo hurry up m_fLastDecodedPictureClock: %
           break;
         }
 
-        //if (iDecoderState & VC_FLUSHED)
-        //  continue;
-
         // if last packet was requested to be tried again do just that and loop back around to process its return state
         if (bPacket && (iDecoderState & VC_AGAIN))
         {
-        //TODO: should probably set hurry up drain here for completeness
           iDecoderState = m_pVideoCodec->Decode(pPacket->pData, pPacket->iSize, pPacket->dts, pPacket->pts);
-//          if (iDecoderState & VC_AGAIN && !(iDecoderState & VC_PICTURE))
-//             Sleep(1);
           continue;
         }
 
@@ -924,18 +925,38 @@ CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo hurry up m_fLastDecodedPictureClock: %
           m_pVideoCodec->SetDropState(bRequestDrop);
           m_pVideoCodec->SetDecoderHint(iDecoderHint);
           iDecoderState = m_pVideoCodec->Decode(NULL, 0, DVD_NOPTS_VALUE, DVD_NOPTS_VALUE);
-//          if (!(iDecoderState & VC_BUFFER) && !(iDecoderState & VC_PICTURE))
-//           Sleep(1);
           continue;
         }
  
         if (bStreamEOF) //EOF and timed out so drain render manager buffers
         {
-           // drain render buffers
-           while (!g_renderManager.Drain() && !m_bStop)
+           // wait for output to confirm it has posted all pics to render manager
+           ToOutputMessage toMsg;
+           toMsg.iCmd = VOCMD_FINISHSTREAM;
+           if (m_pVideoOutput->SendMessage(toMsg, 1))
            {
-              Sleep(1);
+              // wait for receipt message
+              FromOutputMessage fromMsg;
+              int iResult;
+              bGotMsg = m_pVideoOutput->GetMessage(fromMsg, 200);
+              while (bGotMsg)
+              {
+                 iResult = fromMsg.iResult;
+                 if (iResult & EOS_DROPPED)
+                 {
+                    m_iDroppedFrames++;
+                    m_iOutputDroppedFrames++;
+                 }
+                 if (iResult & EOS_QUIESCED)
+                    break;
+                 bGotMsg = m_pVideoOutput->GetMessage(fromMsg);
+              }
+              if (!(iResult & EOS_QUIESCED))
+                 CLog::Log(LOGWARNING, "CDVDPlayerVideo - Did not recieve QUIESCED message from output thread");
            }
+           // now drain render buffers
+           g_renderManager.WaitDrained(300);
+	   CLog::Log(LOGNOTICE, "CDVDPlayerVideo - Finished stream");
            bStreamEOF = false;
         }
         // if we are here we are not at EOF and decoder has requested more data, or we have timed out waiting after EOF
@@ -1447,23 +1468,22 @@ int CDVDPlayerVideo::GetPlaySpeed()
 void CDVDPlayerVideo::SetPlaySpeed(int speed)
 {
   CSingleLock lock(m_playerSection);
-  m_speed = speed;
+  if (m_speed != speed)
+  {
+     m_speed = speed;
+     // reset our last decoded picture clock tracking
+     m_fLastDecodedPictureClock = DVD_NOPTS_VALUE;
+  }
 }
 
 void CDVDPlayerVideo::SetSpeed(int speed)
 {
-
   if(m_messageQueue.IsInited())
     m_messageQueue.Put( new CDVDMsgInt(CDVDMsg::PLAYER_SETSPEED, speed), 1 );
   else
   {
-    CSingleLock lock(m_playerSection);
     SetPlaySpeed(speed);
   }
-  //TODO: m_fLastDecodedPictureClock should be 
-
-  // reset our last decoded picture clock
-  m_fLastDecodedPictureClock = DVD_NOPTS_VALUE;
 }
 
 void CDVDPlayerVideo::SetRefreshChanging(bool changing /* = true */)
@@ -1815,35 +1835,11 @@ int CDVDPlayerVideo::OutputPicture(const DVDVideoPicture* src, double pts, doubl
     return EOS_ABORT;
   }
 
-  //correct any pattern in the timestamps
-  //AddPullupCorrection(pts);
-  //pts += GetPullupCorrection();
-
-  //try to calculate the framerate
-  //CalcFrameRate();
-  //double framerate = GetFrameRate();
-
   //User set delay
   pts += delay;
 
-  // signal to clock what our framerate is, it may want to adjust it's
-  // speed to better match with our video renderer's output speed
-  //double interval;
-  //m_pClock->UpdateFramerate(framerate, &interval);
-  //m_pClock->UpdateFramerate(framerate);
-
-//TODO: consider whether we should always update iDuration to frametime regardless
-//  if(pPicture->iDuration == 0.0)
-//     pPicture->iDuration = (double)DVD_TIME_BASE / framerate;
-
-//TODO: is this right? what happpens when iDuration has been set above to output frame rate?
-//  if (pPicture->iRepeatPicture)
-//     pPicture->iDuration *= pPicture->iRepeatPicture + 1;
-
-
   if (pPicture->iFlags & DVP_FLAG_DROPPED)
   {
-CLog::Log(LOGDEBUG,"ASB: OutputPicture pPicture->iFlags & DVP_FLAG_DROPPED DiscardPicture");
     m_pVideoCodec->DiscardPicture();
     return result | EOS_DROPPED;
   }
@@ -1851,14 +1847,14 @@ CLog::Log(LOGDEBUG,"ASB: OutputPicture pPicture->iFlags & DVP_FLAG_DROPPED Disca
   // calculate the time we need to delay this picture before it should be displayed
   double fClockSleep, fPlayingClock, fCurrentClock, fPresentClock;
 
-  fPlayingClock = m_pClock->GetClock(fCurrentClock, true); // snapshot current clock
+  fPlayingClock = m_pClock->GetClock(fCurrentClock, true); //snapshot current clock
   fClockSleep = pts - fPlayingClock; //sleep calculated by pts to clock comparison
 
   // correct sleep times based on speed
   if(playspeed != DVD_PLAYSPEED_PAUSE)
     fClockSleep = fClockSleep * DVD_PLAYSPEED_NORMAL / playspeed;
   else
-    fClockSleep = 0; //TODO: not really correct as this might speed up render at moment of pause
+    fClockSleep = 0; 
 
   // protect against erroneously dropping to a very low framerate
   fClockSleep = min(fClockSleep, DVD_MSEC_TO_TIME(1000));
@@ -1871,8 +1867,6 @@ CLog::Log(LOGDEBUG,"ASB: OutputPicture pPicture->iFlags & DVP_FLAG_DROPPED Disca
   //TODO: work out what is the exact purpose of AutoCrop...team xbmc seem not to feel the need to comment the code
   AutoCrop(pPicture);
 
-//TODO: remove this wait duration monitoring once fully happy with everything
-  int64_t prewait = CurrentHostCounter();
   // note that WaitForBuffer() does not return an actual index value
   int index = g_renderManager.WaitForBuffer(m_bStop);
 
@@ -1883,7 +1877,6 @@ CLog::Log(LOGDEBUG,"ASB: OutputPicture pPicture->iFlags & DVP_FLAG_DROPPED Disca
     Sleep(1);
     index = g_renderManager.WaitForBuffer(m_bStop);
   }
-  int64_t postwait = CurrentHostCounter();
 
   if (index < 0)
   {
