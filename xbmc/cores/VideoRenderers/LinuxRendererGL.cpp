@@ -289,7 +289,6 @@ bool CLinuxRendererGL::Configure(unsigned int width, unsigned int height, unsign
   ManageDisplay();
 
   m_bConfigured = true;
-  m_scalingMethodGui = (ESCALINGMETHOD)-1;
 
   // if our resolution was not changed by ChooseBestResolution() and frame ratio not changed by CalculateFrameAspectRatio()
   // and source width and height have not changed then don't unconfigure
@@ -300,6 +299,8 @@ bool CLinuxRendererGL::Configure(unsigned int width, unsigned int height, unsign
      CLog::Log(LOGDEBUG, "CLinuxRendererGL::Configure fps-only change with no resolution change, no need to unconfigure");
      return true;
   }
+
+  m_scalingMethodGui = (ESCALINGMETHOD)-1;
 
   m_bImageReady = false;
 
