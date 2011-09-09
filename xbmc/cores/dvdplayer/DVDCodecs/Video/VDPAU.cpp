@@ -1309,8 +1309,6 @@ bool CVDPAU::ConfigOutputMethod(AVCodecContext *avctx, AVFrame *pFrame)
       m_freeOutPic.push_back(&m_allOutPic[i]);
     }
 
-    m_lastReportedReadyPic = NULL;
-
     m_vdpauOutputMethod = OUTPUT_GL_INTEROP_YUV;
   }
   // RGB config for pixmap and gl interop with vdpau deinterlacing
@@ -1327,7 +1325,6 @@ bool CVDPAU::ConfigOutputMethod(AVCodecContext *avctx, AVFrame *pFrame)
     // create mixer thread
     Create();
 
-    m_lastReportedReadyPic = NULL;
     totalAvailableOutputSurfaces = 0;
 
     int tmpMaxOutputSurfaces = NUM_OUTPUT_SURFACES;
@@ -1413,6 +1410,9 @@ bool CVDPAU::FiniOutputMethod()
 //      m_bPixmapBound = false;
 //    }
 //  }
+
+  // make sure no output surfaces are in use
+  Reset();
 
   // stop mixer thread
   StopThread();
@@ -1782,7 +1782,7 @@ int CVDPAU::Decode(AVCodecContext *avctx, AVFrame *pFrame, bool bSoftDrain, bool
      targetUsed = std::min(m_outPicsNum - NUM_RENDERBUF_PICS - 1, 3);
   targetUsed = std::max(targetUsed, 0);
 
-  OutputPicture *usedPicFront;
+  OutputPicture *firstNotReportedPic;
   int usedPics;
 
   if(pFrame)
@@ -1813,6 +1813,7 @@ int CVDPAU::Decode(AVCodecContext *avctx, AVFrame *pFrame, bool bSoftDrain, bool
       memset(&outPic->DVDPic, 0, sizeof(DVDVideoPicture));
       ((CDVDVideoCodecFFmpeg*)avctx->opaque)->GetPictureCommon(&outPic->DVDPic);
       outPic->render = render;
+      outPic->reported = false;
       m_usedOutPic.push_back(outPic);
       lock.Leave();
     }
@@ -1844,36 +1845,44 @@ int CVDPAU::Decode(AVCodecContext *avctx, AVFrame *pFrame, bool bSoftDrain, bool
 
   if (m_vdpauOutputMethod == OUTPUT_GL_INTEROP_YUV) 
   {
-     int retval = 0;
-     while (++iter < 2000)
-     {
-        CSingleLock lock(m_outPicSec);
-        usedPics = m_usedOutPic.size();
-        if (usedPics > 0)
-           usedPicFront = m_usedOutPic.front();
-        lock.Leave();
+    int retval = 0;
+    while (++iter < 2000)
+    {
+      CSingleLock lock(m_outPicSec);
+      usedPics = m_usedOutPic.size();
 
-        if ((!bSoftDrain) && usedPics < targetUsed && (!QueueIsFull()))
-          return VC_BUFFER;
-
-        if (usedPics > 0 && usedPicFront != m_lastReportedReadyPic) //we have not reported about this usedPic yet
+      firstNotReportedPic = 0;
+      for (int i = 0; i < 2 && i < usedPics; ++i)
+      {
+        if (!m_usedOutPic[i]->reported)
         {
-          m_lastReportedReadyPic = usedPicFront;
-          retval = VC_PICTURE;
+          firstNotReportedPic = m_usedOutPic[i];
           break;
         }
-        //loop again to check to see if GetPicture has been called if asked to drain
-        if (usedPics > 1 && bSoftDrain && iter < 200)
-        {
-           usleep(100);
-           continue;
-        }
-        break;
-     }
+      }
+      lock.Leave();
 
-     if (!QueueIsFull())
-        retval |= VC_BUFFER;
-     return retval;
+      if ((!bSoftDrain) && usedPics < targetUsed && (!QueueIsFull()))
+        return VC_BUFFER;
+
+      if (firstNotReportedPic) //we have not reported about this usedPic yet
+      {
+        firstNotReportedPic->reported = true;
+        retval = VC_PICTURE;
+        break;
+      }
+      //loop again to check to see if GetPicture has been called if asked to drain
+      if (usedPics > 1 && bSoftDrain && iter < 200)
+      {
+        usleep(100);
+        continue;
+      }
+      break;
+    }
+
+    if (!QueueIsFull())
+      retval |= VC_BUFFER;
+    return retval;
   }
   // else MIXER based modes from here on
 
@@ -1892,58 +1901,75 @@ int CVDPAU::Decode(AVCodecContext *avctx, AVFrame *pFrame, bool bSoftDrain, bool
     // check if we have a picture to return
     if (usedPics > 0)
     {
-       CSingleLock lock(m_outPicSec);
-       usedPicFront = m_usedOutPic.front();
-       if ( (m_usedOutPic.front()->DVDPic.iFlags & DVP_FLAG_DROPPED) ||
-            (m_vdpauOutputMethod == OUTPUT_PIXMAP && m_usedOutPic.front()->outputSurface == VDP_INVALID_HANDLE) )
-       {
-          if (dropped)
-             break; //drop this next time around else caller can't report on drops accurately
-          m_freeOutPic.push_back(m_usedOutPic.front());
-          m_usedOutPic.pop_front();
-          lock.Leave();
-          retval =  VC_DROPPED | VC_PRESENTDROP;
-          dropped = true;
-          continue;
-       }
-       lock.Leave();
+      CSingleLock lock(m_outPicSec);
 
-       // if not asked to drain and not enough data queued then request more data - don't tell caller there is a picture
-       // in order to promote pre-buffering. 
-       if ((!bSoftDrain) && usedPics < targetUsed && (!QueueIsFull()))
-          return VC_BUFFER;
+      firstNotReportedPic = 0;
+      int firstNotReportedPicIndex;
+      for (int i = 0; i < 2 && i < usedPics; ++i)
+      {
+        if (!m_usedOutPic[i]->reported)
+        {
+          firstNotReportedPic = m_usedOutPic[i];
+          firstNotReportedPicIndex = i;
+          break;
+        }
+      }
 
-//CLog::Log(LOGDEBUG,"ASB: CVDPAU::Decode m_lastReportedReadyPic: %u usedPicFront: %u usedPics: %i", (unsigned int)m_lastReportedReadyPic, (unsigned int)usedPicFront, usedPics);
-       if (m_lastReportedReadyPic != usedPicFront) //we have not reported about this usedPic yet
-       {
-          if (m_vdpauOutputMethod == OUTPUT_PIXMAP)
+      if ( firstNotReportedPic &&
+           firstNotReportedPic->DVDPic.iFlags & DVP_FLAG_DROPPED)
+      {
+        //drop this next time around else caller can't report on drops accurately
+        if (dropped)
+          break;
+        // when using pixmap we can only drop pic with index 0
+        if (m_vdpauOutputMethod == OUTPUT_PIXMAP &&
+            firstNotReportedPicIndex != 0)
+          break;
+        m_freeOutPic.push_back(firstNotReportedPic);
+        m_usedOutPic.erase(m_usedOutPic.begin()+firstNotReportedPicIndex);
+        lock.Leave();
+        retval =  VC_DROPPED | VC_PRESENTDROP;
+        dropped = true;
+        continue;
+      }
+
+      lock.Leave();
+
+      // if not asked to drain and not enough data queued then request more data - don't tell caller there is a picture
+      // in order to promote pre-buffering.
+      if ((!bSoftDrain) && usedPics < targetUsed && (!QueueIsFull()))
+        return VC_BUFFER;
+
+      if (firstNotReportedPic) //we have not reported about this usedPic yet
+      {
+        if (m_vdpauOutputMethod == OUTPUT_PIXMAP)
+        {
+          VdpPresentationQueueStatus status;
+          VdpTime time;
+          VdpStatus vdp_st;
+          VdpOutputSurface surface = firstNotReportedPic->outputSurface;
+
+          vdp_st = vdp_presentation_queue_query_surface_status(
+                     firstNotReportedPic->vdp_flip_queue,
+                     surface, &status, &time);
+          CheckStatus(vdp_st, __LINE__);
+          if (status == VDP_PRESENTATION_QUEUE_STATUS_VISIBLE && vdp_st == VDP_STATUS_OK)
           {
-             VdpPresentationQueueStatus status;
-             VdpTime time;
-             VdpStatus vdp_st;
-             VdpOutputSurface surface = m_usedOutPic.front()->outputSurface;
+            // this output surface should now be fully copied to the pixmap presentation
+            // but currently we don't allow re-use for other outPics until GetPicture removes this one from usedPic Q
 
-             vdp_st = vdp_presentation_queue_query_surface_status(
-                      m_usedOutPic.front()->vdp_flip_queue,
-                      surface, &status, &time);
-             CheckStatus(vdp_st, __LINE__);
-             if (status == VDP_PRESENTATION_QUEUE_STATUS_VISIBLE && vdp_st == VDP_STATUS_OK)
-             {
-                // this output surface should now be fully copied to the pixmap presentation
-                // but currently we don't allow re-use for other outPics until GetPicture removes this one from usedPic Q
-             
-                m_lastReportedReadyPic = usedPicFront;
-                retval |= VC_PICTURE;
-                break;
-             }
+            firstNotReportedPic->reported = true;
+            retval |= VC_PICTURE;
+            break;
           }
-          else
-          {
-             m_lastReportedReadyPic = usedPicFront;
-             retval |= VC_PICTURE;
-             break;
-          }
-       }
+        }
+        else
+        {
+          firstNotReportedPic->reported = true;
+          retval |= VC_PICTURE;
+          break;
+        }
+      }
     }
 
     // if we are here we have adequate usedPics buffers filled but no picture to give or we have no usedPics at all
@@ -2526,6 +2552,7 @@ void CVDPAU::Process()
 
       // put pic in out queue
       outPicLock.Enter();
+      outPic->reported = false;
       m_usedOutPic.push_back(outPic);
       outPicLock.Leave();
 

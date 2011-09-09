@@ -286,6 +286,7 @@ protected:
     GLXPixmap  glPixmap;
     Pixmap  pixmap;
     bool bound;
+    bool reported;
     VdpPresentationQueueTarget vdp_flip_target;
     VdpPresentationQueue vdp_flip_queue;
 #ifdef GL_NV_vdpau_interop
@@ -308,7 +309,6 @@ protected:
   std::deque<OutputPicture*> m_freeOutPic;
   std::deque<OutputPicture*> m_usedOutPic;
   OutputPicture *m_presentPicture;
-  OutputPicture *m_lastReportedReadyPic;
   OutputPicture *m_flipBuffer[NUM_RENDERBUF_PICS];
   unsigned int m_mixerCmd;
   CCriticalSection m_mixerSec, m_outPicSec, m_videoSurfaceSec, m_flipSec;
