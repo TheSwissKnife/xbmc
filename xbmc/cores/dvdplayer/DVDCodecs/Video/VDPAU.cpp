@@ -1779,7 +1779,7 @@ int CVDPAU::Decode(AVCodecContext *avctx, AVFrame *pFrame, bool bSoftDrain, bool
   else if (m_vdpauOutputMethod == OUTPUT_GL_INTEROP_RGB) // target around 3 if sensible
      targetUsed = std::min(m_outPicsNum - NUM_RENDERBUF_PICS - 1, 3);
   else //OUTPUT_GL_INTEROP_YUV, target around 4 if sensible
-     targetUsed = std::min(m_outPicsNum - NUM_RENDERBUF_PICS - 1, 4);
+     targetUsed = std::min(m_outPicsNum - NUM_RENDERBUF_PICS - 1, 3);
   targetUsed = std::max(targetUsed, 0);
 
   OutputPicture *usedPicFront;
@@ -1853,16 +1853,17 @@ int CVDPAU::Decode(AVCodecContext *avctx, AVFrame *pFrame, bool bSoftDrain, bool
            usedPicFront = m_usedOutPic.front();
         lock.Leave();
 
+        if ((!bSoftDrain) && usedPics < targetUsed && (!QueueIsFull()))
+          return VC_BUFFER;
+
         if (usedPics > 0 && usedPicFront != m_lastReportedReadyPic) //we have not reported about this usedPic yet
         {
-           if (bSoftDrain || usedPics >= targetUsed)
-           {
-              m_lastReportedReadyPic = usedPicFront;
-              retval = VC_PICTURE;
-              break;
-           }
+          m_lastReportedReadyPic = usedPicFront;
+          retval = VC_PICTURE;
+          break;
         }
-        if (usedPics > 0 && bSoftDrain && iter < 200) //loop again to check to see if GetPicture has been called if asked to drain
+        //loop again to check to see if GetPicture has been called if asked to drain
+        if (usedPics > 1 && bSoftDrain && iter < 200)
         {
            usleep(100);
            continue;
