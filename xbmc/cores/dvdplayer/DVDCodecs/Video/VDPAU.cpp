@@ -1419,23 +1419,6 @@ bool CVDPAU::FiniOutputMethod()
 
   presentSurface = VDP_INVALID_HANDLE;
 
-  for (int i = 0; i < totalAvailableOutputSurfaces; i++)
-  {
-    if (outputSurfaces[i] == VDP_INVALID_HANDLE)
-      continue;
-    vdp_st = vdp_output_surface_destroy(outputSurfaces[i]);
-    CheckStatus(vdp_st, __LINE__);
-    outputSurfaces[i] = VDP_INVALID_HANDLE;
-  }
-  totalAvailableOutputSurfaces = 0;
-
-  if (videoMixer != VDP_INVALID_HANDLE)
-  {
-    vdp_st = vdp_video_mixer_destroy(videoMixer);
-    CheckStatus(vdp_st, __LINE__);
-    videoMixer = VDP_INVALID_HANDLE;
-  }
-
   // destroy pixmap stuff
   for (int i = 0; i < m_outPicsNum; i++)
   {
@@ -1464,6 +1447,24 @@ bool CVDPAU::FiniOutputMethod()
       m_allOutPic[i].pixmap = 0;
     }
   }
+
+  for (int i = 0; i < totalAvailableOutputSurfaces; i++)
+  {
+    if (outputSurfaces[i] == VDP_INVALID_HANDLE)
+      continue;
+    vdp_st = vdp_output_surface_destroy(outputSurfaces[i]);
+    CheckStatus(vdp_st, __LINE__);
+    outputSurfaces[i] = VDP_INVALID_HANDLE;
+  }
+  totalAvailableOutputSurfaces = 0;
+
+  if (videoMixer != VDP_INVALID_HANDLE)
+  {
+    vdp_st = vdp_video_mixer_destroy(videoMixer);
+    CheckStatus(vdp_st, __LINE__);
+    videoMixer = VDP_INVALID_HANDLE;
+  }
+
   m_preBindPixmapsDone = false;
 
   { CSingleLock lock(m_mixerSec);
@@ -2334,6 +2335,7 @@ void CVDPAU::Process()
        {
           msg.render = NULL;
           m_mixerInput.push_front(msg);
+          CLog::Log(LOGNOTICE,"%s insert null message for draining", __FUNCTION__);
        }
        else
        {
