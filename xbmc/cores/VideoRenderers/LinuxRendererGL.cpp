@@ -404,10 +404,15 @@ void CLinuxRendererGL::Upload(int source)
 {
   if (!m_bValidated) return;
 
+  // PBOs are not used by vdpau or vaapi
+  BindPbo(m_buffers[source]);
+
   // call texture load function
   (this->*m_textureUpload)(source);
 
   m_buffers[source].loaded = true;
+
+  UnBindPbo(m_buffers[source]);
 }
 
 
@@ -760,9 +765,6 @@ void CLinuxRendererGL::DrawBlackBars()
 
 void CLinuxRendererGL::FlipPage(int source)
 {
-  // PBOs are not used by vdpau or vaapi
-  UnBindPbo(m_buffers[m_iCurrentRenderBuffer]);
-
   int curr = m_iCurrentRenderBuffer;
   if( source >= 0 && source < m_NumRenderBuffers )
     m_iCurrentRenderBuffer = source;
@@ -771,8 +773,6 @@ void CLinuxRendererGL::FlipPage(int source)
   // if return -1 then flip could not happen as buffer not yet filled so we revert (caller should check possible before calling)
   if (m_iCurrentRenderBuffer == -1)
      m_iCurrentRenderBuffer = curr;
-
-  BindPbo(m_buffers[m_iCurrentRenderBuffer]);
 
   m_buffers[m_iCurrentRenderBuffer].flipindex = ++m_flipindex;
 

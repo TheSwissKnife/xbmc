@@ -1171,7 +1171,7 @@ void CXBMCRenderManager::CheckNextBuffer()
     m_presenttime  = presenttime;
     m_presentfield = *image.pSync;
     m_presentstep  = PRESENT_FLIP;
-    m_presentsource = -1;
+    m_presentsource = index;
     m_presentmethod = g_settings.m_currentVideoSettings.m_InterlaceMethod;
 
     /* select render method for auto */

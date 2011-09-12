@@ -463,7 +463,7 @@ unsigned int CDVDVideoCodecFFmpeg::SetFilters(unsigned int flags)
     flags &= ~FILTER_DEINTERLACE_ANY | FILTER_DEINTERLACE_YADIF;
   }
 
-  m_filters = flags;
+  m_iFilterFlags = flags;
   return flags;
 }
 
@@ -472,6 +472,8 @@ bool CDVDVideoCodecFFmpeg::WaitForFreeBuffer()
   bool bReturn = true;
   if (m_pHardware && m_pHardware->QueueIsFull(true))
     bReturn = false;
+  else if (!m_pHardware)
+    m_bufferEvent.Wait();
 
   return bReturn;
 }
@@ -839,6 +841,7 @@ int CDVDVideoCodecFFmpeg::Decode(BYTE* pData, int iSize, double dts, double pts)
   if (!m_filters.Equals(m_filters_next))
   {
     m_filters = m_filters_next;
+
     if(FilterOpen(m_filters) < 0)
       FilterClose();
   }

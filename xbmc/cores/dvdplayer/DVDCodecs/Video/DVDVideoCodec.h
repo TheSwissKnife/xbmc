@@ -272,14 +272,16 @@ public:
 
   virtual bool WaitForFreeBuffer()
   {
-    m_bufferEvent.Reset();
     m_bufferEvent.Wait();
     return true;
   }
 
-  virtual void SignalBufferChange()
+  virtual void SignalBufferChange(bool value)
   {
-    m_bufferEvent.Set();
+    if (value)
+      m_bufferEvent.Set();
+    else
+      m_bufferEvent.Reset();
   }
 
   virtual bool HwFreeResources(bool test = false)
@@ -289,11 +291,11 @@ public:
 
   virtual void SetGroupId(int iGroup) {m_iGroupId = iGroup;};
   virtual void SetForcedAspectRatio(float fForcedAspectRatio){m_fForcedAspectRatio = fForcedAspectRatio;};
-  virtual unsigned int GetFilters() { return m_filters; }
+  virtual unsigned int GetFilters() { return m_iFilterFlags; }
 
 protected:
   int    m_iGroupId;
   float  m_fForcedAspectRatio;
-  unsigned int  m_filters;
+  unsigned int  m_iFilterFlags;
   CEvent m_bufferEvent;
 };
