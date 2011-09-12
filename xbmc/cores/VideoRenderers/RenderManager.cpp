@@ -271,7 +271,6 @@ CStdString CXBMCRenderManager::GetVSyncState()
 
 bool CXBMCRenderManager::Configure(unsigned int width, unsigned int height, unsigned int d_width, unsigned int d_height, float fps, unsigned flags)
 {
-  // TODO: find a method to only do the a render drain if configure is changing resolution
   /* make sure any queued frame was fully presented */
   if (IsConfigured() && CheckResolutionChange(fps) && !WaitDrained(500))
       CLog::Log(LOGWARNING, "CRenderManager::Configure - timeout waiting for previous frame");
@@ -1012,6 +1011,7 @@ void CXBMCRenderManager::UpdateDisplayInfo()
      m_displayinfo[0].frameclock = m_postflipclock + (displayrefreshdur / 2) ;
   }
 
+//TODO: change framedur to pts ?
   // if we didn't change speed or duration, and at normal speed and using smooth video then 
   // estimate if we got long/short display frames for codec info
   int frameplayspeed1 = m_displayinfo[1].frameplayspeed;
@@ -1061,6 +1061,8 @@ void CXBMCRenderManager::NotifyDisplayFlip()
   UpdatePostFlipClock();
   UpdateDisplayInfo();
 
+CLog::Log(LOGDEBUG, "CXBMCRenderManager::NotifyDisplayFlip called with m_renderinfo.framepts: %f", m_renderinfo.framepts);
+
   CRetakeLock<CExclusiveLock> lock(m_sharedSection);
 
   m_pRenderer->NotifyDisplayFlip();
@@ -1097,7 +1099,8 @@ double CXBMCRenderManager::GetDisplaySignalToViewDelay()
 
 double CXBMCRenderManager::GetDisplayDelay()
 {
-  // estimate of clock time to take an output frame, render it then deliver it to be visible on display
+  // estimate in clock time of the longest it will take to take an output frame, render it, 
+  // then deliver it to be visible on display
   // This function allows the player to prepare relative clock-to-pts delta at initial resync
 
   // - assume 50ms for render + signal to view delay

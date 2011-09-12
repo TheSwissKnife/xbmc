@@ -1696,10 +1696,7 @@ bool CDVDPlayer::CheckPlayerInit(CCurrentStream& current, unsigned int source)
     }
 
     double clockoffset; //set clock earlier than dts to allow for delay in decoding/processing through to display
-    if (m_playSpeed == DVD_PLAYSPEED_PAUSE)
-       clockoffset = DVD_MSEC_TO_TIME(200);
-    else
-       clockoffset = DVD_MSEC_TO_TIME(400);
+    clockoffset = DVD_MSEC_TO_TIME(500);
     //TODO: factor in rendermanager displaydelay function + 50ms (for example) rather than fixed values
     SendPlayerMessage(new CDVDMsgGeneralResync(current.dts - clockoffset, setclock), source);
   }
@@ -2238,7 +2235,9 @@ void CDVDPlayer::HandleMessages()
         // 2. skip frames and adjust their pts or the clock
         m_playSpeed = speed;
         m_caching = CACHESTATE_DONE;
-        m_clock.SetSpeed(speed);
+        // Let the video player pause the clock (fix this up properly later)
+        if (speed != DVD_PLAYSPEED_PAUSE)
+           m_clock.SetSpeed(speed);
         m_dvdPlayerAudio.SetSpeed(speed);
         m_dvdPlayerVideo.SetSpeed(speed);
 

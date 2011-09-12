@@ -33,10 +33,30 @@
 #include <GL/glx.h>
 
 // different types of output message
-#define VOCMD_NEWPIC             0x1 //new picture from decoder is ready
-#define VOCMD_PROCESSOVERLAYONLY 0x2 //just process overlays
-#define VOCMD_FINISHSTREAM       0x4 //video player has finished stream
-#define VOCMD_DEALLOCPIC         0x8 //video player wishes current pic to be de-allocated 
+enum VOCMD_TYPE
+{
+VOCMD_NOCMD = 0,          
+VOCMD_NEWPIC,             //new picture from video player is ready
+VOCMD_PROCESSOVERLAYONLY, //just process overlays
+VOCMD_FLUSHSTREAM,        //video player has flushed stream
+VOCMD_FINISHSTREAM,       //video player has finished stream
+VOCMD_DEALLOCPIC,         //video player wishes current pic to be de-allocated 
+VOCMD_SPEEDCHANGE,        //video player has changed play speed 
+VOCMD_EXPECTDELAY         //video player expects a delay in issuing messages for a period
+};
+
+enum VO_STATE
+{
+VO_STATE_NONE = 0,          
+VO_STATE_RECOVER,             //recovering
+VO_STATE_WAITINGPLAYERSTART,  //waiting for player to tell us it has fully started
+VO_STATE_RENDERERCONFIGURING, //waiting for renderer to be configured
+VO_STATE_CLOCKSYSNC,          //syncing clock to output pts (...it must make video the master, sync the clock, then after say 10 seconds resign control)
+VO_STATE_OVERLAYONLY,         //just processng overlays
+VO_STATE_QUIESCING,           //moving to state of QUIESCED
+VO_STATE_QUIESCED,            //state of not expecting regular pic msgs to process and previous fully processed
+VO_STATE_NORMALOUTPUT         //processing pics and overlays as normal
+};
 
 struct ToOutputMessage
 {
@@ -51,7 +71,7 @@ struct ToOutputMessage
   bool bDrop; //drop flag (eg drop the picture)
   bool bPlayerStarted; //video player has reached started state
   double fInterval; //interval in dvd time (eg for overlay freqeuncy)
-  int iCmd; //command type
+  VOCMD_TYPE iCmd; //command type
   int iSpeed; //video player play speed
 };
 
@@ -67,7 +87,7 @@ struct FromOutputMessage
 class CDVDPlayerVideoOutput : public CThread
 {
 public:
-  CDVDPlayerVideoOutput(CDVDPlayerVideo *videoplayer);
+  CDVDPlayerVideoOutput(CDVDPlayerVideo *videoplayer, CDVDClock* pClock);
   virtual ~CDVDPlayerVideoOutput();
 
   void Start();
@@ -75,7 +95,7 @@ public:
   void Dispose();
   bool SendMessage(ToOutputMessage &msg, int timeout = 0);
   bool GetMessage(FromOutputMessage &msg, int timeout = 0);
-  int GetMessageSize();
+  int GetToMessageSize();
   void SetCodec(CDVDVideoCodec *codec);
   void SetPts(double pts);
   double GetPts();
@@ -84,8 +104,15 @@ protected:
   void OnExit();
   void Process();
   bool GetPicture(double& pts, double& frametime, bool drop = false);
+  void SendPlayerMessage(int result);
   bool RefreshGlxContext();
   bool DestroyGlxContext();
+  bool RendererConfiguring();
+  void SetRendererConfiguring(bool configuring = true);
+  bool Recovering();
+  void SetRecovering(bool recover = true);
+  bool ToMessageQIsEmpty();
+  ToOutputMessage GetToMessage();
 
   double m_pts;
   CDVDVideoCodec* m_pVideoCodec;
@@ -101,5 +128,7 @@ protected:
   Pixmap    m_pixmap;
   GLXPixmap m_glPixmap;
   bool m_recover;
+  CDVDClock* m_pClock;
+  VO_STATE m_state;
   bool m_configuring;
 };

@@ -106,7 +106,7 @@ public:
   int GetVideoBitrate();
 
   void SetSpeed(int iSpeed);
-  int OutputPicture(const DVDVideoPicture* src, double pts, double delay, int playspeed);
+  int OutputPicture(const DVDVideoPicture* src, double pts, double delay, int playspeed, int prevplayspeed);
   bool CheckRenderConfig(const DVDVideoPicture* src);
   void ResumeAfterRefreshChange();
   double GetCorrectedPicturePts(double pts, double& frametime); // return pattern corrected video picture pts and calculated frametime
@@ -144,12 +144,15 @@ protected:
   bool GetRefreshChanging();
   int GetPlaySpeed();
   void SetPlaySpeed(int speed);
+  void SetProcessNextFrame(bool state = true);
+  bool GetProcessNextFrame();
 
   void ProcessVideoUserData(DVDVideoUserData* pVideoUserData, double pts);
 
   double m_iCurrentPts; // last pts output to renderer pipe
   double m_iVideoDelay;
   double m_iSubtitleDelay;
+  bool m_processNextFrame; // force the next frame to pushed through to output
 //  double m_FlipTimeStamp; // time stamp of last flippage. used to play at a forced framerate
 
 //  int m_iLateFrames;
