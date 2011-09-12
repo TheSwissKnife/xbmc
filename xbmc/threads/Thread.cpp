@@ -82,10 +82,18 @@ bool CThread::IsRunning()
 THREADFUNC CThread::staticThread(void* data)
 {
   CThread* pThread = (CThread*)(data);
+  std::string name;
+  ThreadIdentifier id;
+  bool autodelete;
+
   if (!pThread) {
     CLog::Log(LOGERROR,"%s, sanity failed. thread is NULL.",__FUNCTION__);
     return 1;
   }
+
+  name = pThread->m_ThreadName;
+  id = pThread->m_ThreadId;
+  autodelete = pThread->m_bAutoDelete;
 
   pThread->SetThreadInfo();
 
@@ -101,21 +109,20 @@ THREADFUNC CThread::staticThread(void* data)
   // lock during termination
   CSingleLock lock(pThread->m_CriticalSection);
 
-  ThreadIdentifier threadId = pThread->m_ThreadId;
   pThread->m_ThreadId = 0;
   pThread->m_TermEvent.Set();
   pThread->TermHandler();
 
   lock.Leave();
 
-  if (pThread->IsAutoDelete())
+  if (autodelete)
   {
-    CLog::Log(LOGDEBUG,"Thread %s %"PRIu64" terminating (autodelete)", pThread->m_ThreadName.c_str(), (uint64_t)threadId);
+    CLog::Log(LOGDEBUG,"Thread %s %"PRIu64" terminating (autodelete)", name.c_str(), (uint64_t)id);
     delete pThread;
     pThread = NULL;
   }
   else
-    CLog::Log(LOGDEBUG,"Thread %s %"PRIu64" terminating", pThread->m_ThreadName.c_str(), (uint64_t)threadId);
+    CLog::Log(LOGDEBUG,"Thread %s %"PRIu64" terminating", name.c_str(), (uint64_t)id);
 
   return 0;
 }
