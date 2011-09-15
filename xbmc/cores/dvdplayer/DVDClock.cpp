@@ -139,6 +139,7 @@ void CDVDClock::SetSpeed(int iSpeed)
 {
   // this will sometimes be a little bit of due to rounding errors, ie clock might jump abit when changing speed
   CExclusiveLock lock(m_critSection);
+  int prevSpeed = m_speed;
   m_speed = iSpeed;
 
 CLog::Log(LOGDEBUG, "ASB: CDVDClock::SetSpeed iSpeed: %i", iSpeed);
@@ -150,6 +151,9 @@ CLog::Log(LOGDEBUG, "ASB: CDVDClock::SetSpeed iSpeed: %i", iSpeed);
     return;
   }
 
+  if (iSpeed == prevSpeed)
+    return;
+    
   int64_t current;
   int64_t newfreq = m_systemFrequency * DVD_PLAYSPEED_NORMAL / iSpeed;
 
@@ -162,7 +166,6 @@ CLog::Log(LOGDEBUG, "ASB: CDVDClock::SetSpeed iSpeed: %i", iSpeed);
 
   m_startClock = current - (int64_t)((double)(current - m_startClock) * newfreq / m_systemUsed);
   m_systemUsed = newfreq;
-CLog::Log(LOGDEBUG, "ASB: CDVDClock::SetSpeed iSpeed: %i m_startClock: %"PRId64" current: %"PRId64" m_systemUsed: %"PRId64"", iSpeed, m_startClock, current, m_systemUsed);
 }
 
 void CDVDClock::SetCurrentTickClock(double clock /* = 0.0 */)

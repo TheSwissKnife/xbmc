@@ -1140,7 +1140,6 @@ double CXBMCRenderManager::GetCurrentDisplayPts(int& playspeed, double& callcloc
   if ( (playspeed == DVD_PLAYSPEED_PAUSE) ||
        (clock >= m_displayinfo[0].frameclock + m_displayinfo[0].refreshdur) ) 
   {
-CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::GetCurrentDisplayPts called with m_displayinfo[0].framepts %f", m_displayinfo[0].framepts);
      return m_displayinfo[0].framepts;
   }
   else 

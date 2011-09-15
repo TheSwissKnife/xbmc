@@ -217,7 +217,7 @@ protected:
   int m_iCurrentRenderBuffer;
   int m_NumRenderBuffers;
   int m_iLastRenderBuffer;
-  int m_iLastDisplayedRenderBuffer;
+  int m_iFlipRequestRenderBuffer;
   int m_iOutputRenderBuffer;
   int m_iDisplayedRenderBuffer;
 

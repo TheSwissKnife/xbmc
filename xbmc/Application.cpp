@@ -1918,7 +1918,10 @@ bool CApplication::RenderNoPresent()
   // dont show GUI when playing full screen video
   if (g_graphicsContext.IsFullScreenVideo())
   {
-    if (m_bPresentFrame && IsPlaying() && !IsPaused())
+    unsigned int now = XbmcThreads::SystemClockMillis();
+      
+    //if (m_bPresentFrame && IsPlaying() && !IsPaused())
+    if (m_bPresentFrame && IsPlaying() && (!IsPaused() || now - m_lastNotPausedTime < 1000))
     {
       ResetScreenSaver();
       g_renderManager.Present();

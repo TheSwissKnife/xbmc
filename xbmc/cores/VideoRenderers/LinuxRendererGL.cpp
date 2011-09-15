@@ -140,7 +140,7 @@ CLinuxRendererGL::CLinuxRendererGL()
   m_iFlags = 0;
 
   m_iLastRenderBuffer = -1;
-  m_iLastDisplayedRenderBuffer = -1;
+  m_iFlipRequestRenderBuffer = -1;
   m_iCurrentRenderBuffer = 0;
   m_iOutputRenderBuffer = 0;
   m_iDisplayedRenderBuffer = 0;
@@ -256,7 +256,7 @@ bool CLinuxRendererGL::ValidateRenderTarget()
     }
 
     m_iLastRenderBuffer = -1;
-    m_iLastDisplayedRenderBuffer = -1;
+    m_iFlipRequestRenderBuffer = -1;
     m_iCurrentRenderBuffer = 0;
     m_iOutputRenderBuffer = 0;
     m_iDisplayedRenderBuffer = 0;
@@ -312,7 +312,7 @@ bool CLinuxRendererGL::Configure(unsigned int width, unsigned int height, unsign
     m_buffers[i].image.flags = 0;
 
   m_iLastRenderBuffer = -1;
-  m_iLastDisplayedRenderBuffer = -1;
+  m_iFlipRequestRenderBuffer = -1;
   m_iCurrentRenderBuffer = 0;
   m_iOutputRenderBuffer = 0;
   m_iDisplayedRenderBuffer = 0;
@@ -788,11 +788,18 @@ void CLinuxRendererGL::NotifyDisplayFlip()
   // we can assume that buffer prior to the current render buffer is safe to re-use.
   // If we get notified a second time and render buffer has not moved then we can also assume the render buffer itself
   // is now to safe to re-use.
-  int last = m_iDisplayedRenderBuffer;
-  m_iDisplayedRenderBuffer = (m_iCurrentRenderBuffer + m_NumRenderBuffers - 1) % m_NumRenderBuffers;
-  if (m_iDisplayedRenderBuffer == last)
-     m_iDisplayedRenderBuffer = m_iCurrentRenderBuffer;
-  m_iLastDisplayedRenderBuffer = last;
+  //int last = m_iDisplayedRenderBuffer;
+  if (m_iFlipRequestRenderBuffer == m_iCurrentRenderBuffer)
+      m_iDisplayedRenderBuffer == m_iCurrentRenderBuffer;
+  else
+      m_iDisplayedRenderBuffer = (m_iCurrentRenderBuffer + m_NumRenderBuffers - 1) % m_NumRenderBuffers;
+  m_iFlipRequestRenderBuffer = m_iCurrentRenderBuffer;
+
+  //if (m_iDisplayedRenderBuffer == last)
+  //if (m_iDisplayedRenderBuffer == m_iLastDisplayedRenderBuffer)
+  //   m_iDisplayedRenderBuffer = m_iCurrentRenderBuffer;
+  //m_iLastDisplayedRenderBuffer = last;
+CLog::Log(LOGDEBUG, "ASB: CLinuxRendererGL::NotifyDisplayFlip m_iDisplayedRenderBuffer: %i m_iCurrentRenderBuffer: %i m_iFlipRequestRenderBuffer: %i", m_iDisplayedRenderBuffer, m_iCurrentRenderBuffer, m_iFlipRequestRenderBuffer);
 }
 
 bool CLinuxRendererGL::HasFreeBuffer()
@@ -872,7 +879,7 @@ unsigned int CLinuxRendererGL::PreInit()
     m_resolution = RES_DESKTOP;
 
   m_iLastRenderBuffer = -1;
-  m_iLastDisplayedRenderBuffer = -1;
+  m_iFlipRequestRenderBuffer = -1;
   m_iCurrentRenderBuffer = 0;
   m_iOutputRenderBuffer = 0;
   m_iDisplayedRenderBuffer = 0;

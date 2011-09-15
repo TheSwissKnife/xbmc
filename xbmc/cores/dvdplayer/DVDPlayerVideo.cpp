@@ -1903,7 +1903,10 @@ CLog::Log(LOGDEBUG,"ASB: CDVDPlayerVideo::OutputPicture pts: %f", pts);
 
   // correct sleep times based on speed
   if (outputEarly)
+  {
+    playSpeed = DVD_PLAYSPEED_PAUSE; //consider as pause speed
     fClockSleep = 0;
+  }
   else if (playSpeed != DVD_PLAYSPEED_PAUSE)
     fClockSleep = fClockSleep * DVD_PLAYSPEED_NORMAL / playSpeed;
   else if (prevPlaySpeed != DVD_PLAYSPEED_PAUSE)
