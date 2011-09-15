@@ -230,7 +230,6 @@ public:
 
   VdpDecoder    decoder;
   VdpVideoMixer videoMixer;
-  VdpRect       outRect;
   VdpRect       outRectVid;
 
   static void*    dl_handle;
@@ -322,6 +321,7 @@ protected:
   volatile bool glInteropFinish;
   bool m_dropState;
   bool m_bPostProc;
+  uint32_t *m_threeBlackLines;
 
   enum VDPAUOutputMethod
   {

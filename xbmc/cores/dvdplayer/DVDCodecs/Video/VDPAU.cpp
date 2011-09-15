@@ -170,7 +170,6 @@ CVDPAU::CVDPAU() : CThread("CVDPAU")
   totalAvailableOutputSurfaces = 0;
   presentSurface = VDP_INVALID_HANDLE;
   vid_width = vid_height = OutWidth = OutHeight = 0;
-  memset(&outRect, 0, sizeof(VdpRect));
   memset(&outRectVid, 0, sizeof(VdpRect));
 
   tmpBrightness  = 0;
@@ -182,6 +181,7 @@ CVDPAU::CVDPAU() : CThread("CVDPAU")
     outputSurfaces[i] = VDP_INVALID_HANDLE;
 
   videoMixer = VDP_INVALID_HANDLE;
+  m_threeBlackLines = NULL;
   for (int i = 0; i < NUM_OUTPUT_PICS; i++)
   {
     m_allOutPic[i].vdp_flip_target = VDP_INVALID_HANDLE;
@@ -1348,6 +1348,11 @@ bool CVDPAU::ConfigOutputMethod(AVCodecContext *avctx, AVFrame *pFrame)
                        tmpMaxOutputSurfaces,
                        NUM_OUTPUT_SURFACES);
 
+    // create 3 pitches of black line needed for clipping top
+    // and bottom lines when de-interlacing
+    m_threeBlackLines = new uint32_t[3*OutWidth];
+    memset(m_threeBlackLines, 0, 3*OutWidth*sizeof(uint32_t));
+
     if (g_guiSettings.GetBool("videoplayer.usevdpauinteroprgb"))
        m_outPicsNum = std::min(NUM_OUTPUT_SURFACES, NUM_OUTPUT_PICS);
     else
@@ -1457,6 +1462,9 @@ bool CVDPAU::FiniOutputMethod()
     outputSurfaces[i] = VDP_INVALID_HANDLE;
   }
   totalAvailableOutputSurfaces = 0;
+
+  if (m_threeBlackLines)
+    delete [] m_threeBlackLines;
 
   if (videoMixer != VDP_INVALID_HANDLE)
   {
@@ -2453,13 +2461,6 @@ void CVDPAU::Process()
           futu_surfaces[0] = mixerInput0;
           futu_surfaces[1] = mixerInput0;
         }
-        //TODO: this clipping for interlaced should be optional - and it also forces scaling on output overhead I guess
-        // and perhaps it is better to clip output outRectVid rather than always scale?
-        //TODO: offer option to make SD the correct aspect ratio when upscaling by setting the active SD width to 704 (rather than 720)
-        sourceRect.x0 += 4;
-        sourceRect.y0 += 2;
-        sourceRect.x1 -= 4;
-        sourceRect.y1 -= 2;
       }
 
       // get free pic from queue
@@ -2540,6 +2541,32 @@ void CVDPAU::Process()
                                 0,
                                 NULL);
         CheckStatus(vdp_st, __LINE__);
+
+        if (mixerfield != VDP_VIDEO_MIXER_PICTURE_STRUCTURE_FRAME)
+        {
+          // in order to clip top and bottom lines when de-interlacing
+          // we black those lines as a work around for not working
+          // background colour using the mixer
+          // pixel perfect is preferred over overscanning or zooming
+
+          VdpRect clipRect = m_mixerInput[1].outRectVid;
+          clipRect.y1 = clipRect.y0 + 2;
+          uint32_t *data[] = {m_threeBlackLines};
+          uint32_t pitches[] = {m_mixerInput[1].outRectVid.x1};
+          vdp_st = vdp_output_surface_put_bits_native(outPic->outputSurface,
+                                            (void**)data,
+                                            pitches,
+                                            &clipRect);
+          CheckStatus(vdp_st, __LINE__);
+
+          clipRect = m_mixerInput[1].outRectVid;
+          clipRect.y0 = clipRect.y1 - 2;
+          vdp_st = vdp_output_surface_put_bits_native(outPic->outputSurface,
+                                            (void**)data,
+                                            pitches,
+                                            &clipRect);
+          CheckStatus(vdp_st, __LINE__);
+        }
 
         if (m_vdpauOutputMethod == OUTPUT_PIXMAP)
         {
