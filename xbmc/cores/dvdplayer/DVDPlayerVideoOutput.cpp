@@ -24,6 +24,7 @@
 #include "settings/GUISettings.h"
 #include "settings/Settings.h"
 #include "utils/log.h"
+#include "utils/TimeUtils.h"
 #include "DVDPlayerVideoOutput.h"
 #include "DVDCodecs/Video/DVDVideoCodecFFmpeg.h"
 #include "DVDCodecs/Video/DVDVideoPPFFmpeg.h"
@@ -233,31 +234,103 @@ void CDVDPlayerVideoOutput::SendPlayerMessage(int result)
   m_fromMsgSignal.Set();
 }
 
-/*
-VO_STATE_RECOVER = 1,           //recovering
-VO_STATE_RENDERERCONFIGURING,         //waiting for renderer to configure
-//VO_STATE_CLOCKSYSNC,        //syncing clock (does this deserve a state...it must make video the master, sync the clock, then after say 10 seconds resign control)
-VO_STATE_OVERLAYONLY,       //just processng overlays
-VO_STATE_QUIESCING,         //moving to state of QUIESCED 
-VO_STATE_QUIESCED,          //state of not expecting regular pic msgs to process and prev fully processed
-VO_STATE_NORMALOUTPUT       //processing pics and overlays as normal
-*/
+bool CDVDPlayerVideoOutput::ResyncClockToVideo(double pts, int playerSpeed, bool bFlushed /* = false */)
+{
+   if (pts != DVD_NOPTS_VALUE)
+   {
+      // milliseconds of time required for decoder thread to buffer data adequately and 
+      // to allow audtio thread the chance to adjust probably less than 100ms is not a good idea in any case
+      int prepTime; 
+      if (playerSpeed == DVD_PLAYSPEED_PAUSE)
+         prepTime = 0;
+      else if (bFlushed)
+         prepTime = 300;
+      else
+         prepTime = 150;
+
+      double clockPrime = 0.0;
+      int sleepMs = 0;
+      double displayDelay; 
+      double displayTickDelay; 
+      double displaySignalToViewDelay;
+
+      //TODO: calculate the prepTime based on GetDisplayDelay(), GetDisplaySignalToViewDelay(), and buffer decode prep time estimate
+      // - GetDisplayDelay() will tell us how long minimum in absolute clock time it should 
+      //   take to get a picture from output to visible on display
+      // - buffer decode prep estimate should be say 100ms for non-flush and 300ms for flush
+      // - we should set the clock to give close to exact display pts to clock match using GetDisplaySignalToViewDelay()
+      //   which tells us how much clock time after target tick is required to make the pic visible
+
+      // for prepTime of 0 we just set the clock directly and return, otherwise we need to let other clock subscribers
+      // that we are controllling the clock and let then know if they can tweak it for some period within some bounds
+      // - during that time we must wait around until that option has passed (leaving at least say 50ms to output)  
+      if (playerSpeed != DVD_PLAYSPEED_PAUSE)
+      {
+         displayDelay = g_renderManager.GetDisplayDelay() * DVD_TIME_BASE;
+         displaySignalToViewDelay = g_renderManager.GetDisplaySignalToViewDelay() * DVD_TIME_BASE;
+         // g_renderManager.GetDisplayDelay() is total delay and we want to know the distance to clock tick
+         displayTickDelay = displayDelay - displaySignalToViewDelay;
+         double tickInterval = m_pClock->GetTickInterval();
+
+         // target delay in dvd clock time by summing the decode prep time and the display delay
+         double targetDelay = ((double)prepTime * DVD_TIME_BASE / 1000) + displayTickDelay;
+         // round up to a clock tick multiple to make the actual adjust
+         int ticks = (int)((targetDelay / tickInterval) + 1);
+         // this is the adjustment in absolute clock terms that would allow to get ready for the tick
+         double ticktime = (double)ticks * tickInterval; 
+         // add in signal to view delay so that we will be sync'd at view time rather than swap to front buffer tick
+         clockPrime = ticktime + displaySignalToViewDelay; //add in so that we will be sync'd at view time rather than swap to front buffer tick
+         
+         // determine a suitable sleep in millisecs after which we can check the clock after audio may have adjusted
+         sleepMs = (int)(((clockPrime - displayDelay) / DVD_TIME_BASE * 1000) - 20);
+         sleepMs = std::min(1000, sleepMs);
+         sleepMs = std::max(5, sleepMs);
+   
+         //maxTickAdjustOffer is number of ticks forward other subscribers can move the clock
+         //adjustOfferExpirySys is system time when the offer expires
+         //controlDurSys is how long we wish to be the clock controller (clock will remove control after this elapsed sys time
+         int64_t controlDurSys = 5 * CurrentHostFrequency(); //5 seconds
+         int maxTickAdjustOffer = 2;
+         int64_t adjustOfferExpirySys = (sleepMs - 5) * CurrentHostFrequency() / 1000; 
+
+         m_pClock->SetVideoIsController(controlDurSys, maxTickAdjustOffer, adjustOfferExpirySys);
+CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideoOutput::ResyncClockToVideo doing SYNC SetVideoIsController for pts: %f with prepTime: %i, displayDelay: %f displaySignalToViewDelay: %f tickInterval: %f clockPrime: %f sleepMs: %i", pts, prepTime, displayDelay, displaySignalToViewDelay, tickInterval, clockPrime, sleepMs);
+      }
+
+CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideoOutput::ResyncClockToVideo pre SetCurrentTickClock GetClock: %f", m_pClock->GetClock(false));
+      m_pClock->SetCurrentTickClock(pts - (playerSpeed / DVD_PLAYSPEED_NORMAL) * clockPrime);
+CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideoOutput::ResyncClockToVideo done SetCurrentTickClock GetClock: %f", m_pClock->GetClock(false));
+      
+
+      if (playerSpeed != DVD_PLAYSPEED_PAUSE)
+      {
+         //TODO: perhaps do sleep in small steps to monitor the clock progress
+         Sleep(sleepMs);
+CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideoOutput::ResyncClockToVideo done Sleep GetClock: %f", m_pClock->GetClock(false));
+      }
+      return true;
+   }
+   else
+      return false;
+}
 
 void CDVDPlayerVideoOutput::Process()
 {
   bool bTimeoutTryPic = false;
   int playerSpeed = DVD_PLAYSPEED_NORMAL;
+  int prevOutputSpeed = DVD_PLAYSPEED_NORMAL;
   bool bExpectMsgDelay = false;
-  double overlayDelay = m_pVideoPlayer->GetSubtitleDelay();
   double videoDelay = m_pVideoPlayer->GetDelay();
+  // make overlay delay be the video delay combined with the subtitle delay (so that the subtitle delay is relative to video)
+  double overlayDelay = videoDelay + m_pVideoPlayer->GetSubtitleDelay();
   double overlayInterval;
   double msgDelayInterval;
-  int outputSpeed = DVD_PLAYSPEED_PAUSE;
-  int prevOutputSpeed = DVD_PLAYSPEED_PAUSE;
   double frametime = (double)DVD_TIME_BASE / m_pVideoPlayer->GetFrameRate();
   double pts = DVD_NOPTS_VALUE;
-  double clock = CDVDClock::GetAbsoluteClock(true);
-  double lastOutputClock = clock; //init as if we just output
+  double prevOutputPts = DVD_NOPTS_VALUE;
+  double clock = m_pClock->GetAbsoluteClock(true);
+  double prevOutputClock = clock; //init as if we just output
+  double timeoutStartClock = clock; 
   SetRendererConfiguring(false);
   m_state = VO_STATE_RECOVER;  //start in recover state
 
@@ -267,6 +340,7 @@ void CDVDPlayerVideoOutput::Process()
     bool bOutPic = false;
     bool bPicDrop = false;
     bool bOutputOverlay = false;
+    bool bResync = false; //clock resync flag to tell render manager to discard any previous clock corrections
 
     if (m_state == VO_STATE_RECOVER)
     {
@@ -287,8 +361,8 @@ void CDVDPlayerVideoOutput::Process()
       m_toMsgSignal.WaitMSec(200);
       if (RendererConfiguring())
       {
-         clock = CDVDClock::GetAbsoluteClock(true);
-         if (clock - lastOutputClock > DVD_MSEC_TO_TIME(5000))
+         clock = m_pClock->GetAbsoluteClock(true);
+         if (clock - prevOutputClock > DVD_MSEC_TO_TIME(5000))
          {
              CLog::Log(LOGWARNING,"CDVDPlayerVideoOutput::Process - timeout waiting for player to inform us renderer is configured");
          }
@@ -299,7 +373,9 @@ void CDVDPlayerVideoOutput::Process()
          bOutPic = true; //we should try to output the pic that initiated the renderer configure
     }
   
-    // from here on in this iteration we should be having state change only via message passing
+    // from here on in this loop iteration we should be having state change only via message passing
+    // and we should start in a state from list
+    // {VO_STATE_WAITINGPLAYERSTART, VO_STATE_OVERLAYONLY, VO_STATE_QUIESCING, VO_STATE_QUIESCED, VO_STATE_NORMALOUTPUT}
 
     bool bHaveMsg = !(ToMessageQIsEmpty());
     // provided we are not to be outputting previous pic then 
@@ -316,58 +392,80 @@ void CDVDPlayerVideoOutput::Process()
       bPicDrop = toMsg.bDrop;
       interval = toMsg.fInterval;
 
-      // we want to tell OutputPicture our previous output speed so that it can use the previous speed for
-      // calculation of presentation time
-      prevOutputSpeed = outputSpeed; 
       playerSpeed = toMsg.iSpeed;
 
-      // from playerSpeed and state choose a preferable output speed for OutputPicture 
-      // - when waiting for player to start also set output speed to paused (ie 0) 
-      //   so we can get first frame displayed quickly (user can more quickly see start frame)
-      if (m_state != VO_STATE_WAITINGPLAYERSTART)
-         outputSpeed = playerSpeed;
-      else if (m_state == VO_STATE_WAITINGPLAYERSTART)
-         outputSpeed = DVD_PLAYSPEED_PAUSE;
+      // initial adjust of state logic
+      // NOTE: come out of VO_STATE_WAITINGPLAYERSTART when toMsg.bPlayerStarted and playerSpeed not pause 
+      //       but move back only when not toMsg.bPlayerStarted 
 
-      // adjust state for player started state
-      if (m_state != VO_STATE_NORMALOUTPUT && msgCmd == VOCMD_NEWPIC && toMsg.bPlayerStarted)
-        m_state = VO_STATE_NORMALOUTPUT; //move to normal output state
+      if (m_state == VO_STATE_WAITINGPLAYERSTART && 
+              toMsg.bPlayerStarted && playerSpeed != DVD_PLAYSPEED_PAUSE &&
+              (msgCmd == VOCMD_NEWPIC || msgCmd == VOCMD_PROCESSOVERLAYONLY)) 
+         m_state = VO_STATE_SYNCCLOCKFLUSH; //seek, start, flush (longer delay required): move to (temporary state) sync-clock-flush
+
       else if (m_state != VO_STATE_WAITINGPLAYERSTART && !(toMsg.bPlayerStarted))
-        m_state = VO_STATE_WAITINGPLAYERSTART; //move back to waiting player start state
-      else if (m_state != VO_STATE_WAITINGPLAYERSTART && playerSpeed == DVD_PLAYSPEED_PAUSE && ToMessageQIsEmpty())
-         m_state = VO_STATE_QUIESCING; //move to quiescing state (player has paused)
+         m_state = VO_STATE_WAITINGPLAYERSTART; //move back to waiting player start state
+
+      else if (m_state != VO_STATE_WAITINGPLAYERSTART && 
+               prevOutputSpeed == DVD_PLAYSPEED_PAUSE && playerSpeed != DVD_PLAYSPEED_PAUSE && 
+              (msgCmd == VOCMD_NEWPIC || msgCmd == VOCMD_PROCESSOVERLAYONLY)) 
+         m_state = VO_STATE_SYNCCLOCK; //un-pause (shorter delay required): move to (temporary state) sync-clock
+
+      else if (m_state != VO_STATE_NORMALOUTPUT && msgCmd == VOCMD_NEWPIC && 
+               toMsg.bPlayerStarted && playerSpeed != DVD_PLAYSPEED_PAUSE)
+         m_state = VO_STATE_NORMALOUTPUT; //move to normal state 
 
       if (msgCmd == VOCMD_FINISHSTREAM)
       { 
-          m_state = VO_STATE_QUIESCED; //move to quiesced state
-          SendPlayerMessage(EOS_QUIESCED); //tell player we have quiesced (by assumption that player won't send any more cmds after this one)
-          continue;
-      }
-      else if (msgCmd == VOCMD_FLUSHSTREAM)
-      { 
-          //TODO: just make aware that it might be longer than usual for pic? or perhaps we also need to know which pts 
+          m_state = VO_STATE_QUIESCED; //move to quiesced state directly
+          //tell player we have quiesced (by assumption that the player won't send any more cmds after this one)
+          SendPlayerMessage(EOS_QUIESCED);
           continue;
       }
       else if (msgCmd == VOCMD_DEALLOCPIC)
       {
+          // no state change required we just do as commanded and continue
           m_picture.iFlags &= ~DVP_FLAG_ALLOCATED;
           continue;
       }
       else if (msgCmd == VOCMD_SPEEDCHANGE)
       {
+          // only real use at present is to sync clock to a better approximation than what dvd player might have done
+          // - but during overlay only mode it could also be used to perhaps handle overlay timing better (TODO)
+CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideoOutput::Process Got msgCmd == VOCMD_SPEEDCHANGE playerSpeed: %i", playerSpeed);
+          if (playerSpeed == DVD_PLAYSPEED_PAUSE && prevOutputPts != DVD_NOPTS_VALUE)
+          {
+             // pretend we output at this speed as likely no pic msg will be given to us at this speed
+             // - this allows us to detect un-pause later
+             prevOutputSpeed = DVD_PLAYSPEED_PAUSE;
+             m_pClock->Discontinuity(prevOutputPts + videoDelay);  //get the clock re-positioned approximately
+          }
           continue;
       }
       else if (msgCmd == VOCMD_EXPECTDELAY)
       {
+          // just allows us to adjust our expected delay intervals
           bExpectMsgDelay = true;
           msgDelayInterval = interval;
           continue;
       }
       else if (msgCmd == VOCMD_PROCESSOVERLAYONLY)
       {
-          // ignore process-overlay only msg if we have no last pic that we output
-          //TODO: tell player if we could not start doing overlays?
-          if (m_state != VO_STATE_WAITINGPLAYERSTART && (m_picture.iFlags & DVP_FLAG_ALLOCATED))
+          if ((m_state == VO_STATE_SYNCCLOCK) || (m_state == VO_STATE_SYNCCLOCKFLUSH))
+          {
+             if (playerSpeed == DVD_PLAYSPEED_PAUSE && prevOutputPts != DVD_NOPTS_VALUE)
+                m_pClock->Discontinuity(prevOutputPts + videoDelay);  //get the clock re-positioned approximately
+             else if (pts != DVD_NOPTS_VALUE)
+                m_pClock->Discontinuity(pts + videoDelay - (playerSpeed / DVD_PLAYSPEED_NORMAL) * DVD_MSEC_TO_TIME(50));  //get the clock re-positioned approximately
+          }
+          if (!(m_picture.iFlags & DVP_FLAG_ALLOCATED))
+          {
+             // bad condition so return to waiting for start state (until we have a better idea)
+             //TODO: tell player if we could not start doing overlays?
+             CLog::Log(LOGERROR, "CDVDPlayerVideoOutput::Process picture not allocated and overlay-only mode requested");
+             m_state = VO_STATE_WAITINGPLAYERSTART; 
+          }
+          else
           {
              m_state = VO_STATE_OVERLAYONLY;  //move to overlay-only state
              if (interval == 0.0)
@@ -380,37 +478,58 @@ void CDVDPlayerVideoOutput::Process()
       {  // we got a msg informing of a pic available or we timed-out waiting 
          // and will try to get the pic anyway (assuming previous speed and no drop)
         bOutPic = GetPicture(pts, frametime, bPicDrop);
+        if (bOutPic && ((m_state == VO_STATE_SYNCCLOCK) || (m_state == VO_STATE_SYNCCLOCKFLUSH)))
+        {
+           bool bFlushed = m_state == VO_STATE_SYNCCLOCKFLUSH ? true : false;
+           ResyncClockToVideo(pts + videoDelay, playerSpeed, bFlushed);
+           bResync = true;
+           m_state = VO_STATE_NORMALOUTPUT; //assume we move now to normal state
+        }
       }
-      bTimeoutTryPic = false; //reset
     }
-
+   
+    
     // only configure renderer after we got a new picture from decoder
     if (bOutPic && m_pVideoPlayer->CheckRenderConfig(&m_picture))
     {
+      // we are in state {VO_STATE_NORMALOUTPUT or VO_STATE_WAITINGPLAYERSTART} and we have a picture to output 
+      // but its format requires a renderer configure, so we now move state accordingly and no longer wait for messsages
+      // until video player updates the configuring state directly
       m_state = VO_STATE_RENDERERCONFIGURING; //move to renderer configuring state
       SetRendererConfiguring();
       SetPts(pts); //allow other threads to know our pts
       SendPlayerMessage(EOS_CONFIGURE);
       continue;
     }
-    else if (m_state == VO_STATE_OVERLAYONLY) //see if it is time to try to process an overlay
+
+    if (m_state == VO_STATE_OVERLAYONLY) //see if it is time to try to process an overlay
     {
-      clock = CDVDClock::GetAbsoluteClock(true);
-      if (clock - lastOutputClock >= overlayInterval)
+      clock = m_pClock->GetAbsoluteClock(true);
+      if (clock - prevOutputClock >= overlayInterval)
          bOutputOverlay = true;
     }
 
     if (bOutPic || bOutputOverlay) //we have something to output
     {
+      // we want to tell OutputPicture our previous output speed so that it can use the previous speed for
+      // calculation of presentation time
+      prevOutputSpeed = playerSpeed;  //update our previous playspeed only when actually outputting
       int outPicResult = 0;
       SetPts(pts); //allow other threads to know our pts
 
+      bool bOutputEarly = false;
+      if (m_state == VO_STATE_WAITINGPLAYERSTART)
+         bOutputEarly = true;
+
       // call ProcessOverlays here even if no new Pic
+      // TODO: we should adjust ProcessOverlays to accept our speed value, and output-early state for consistency?
       int outOverlayResult = m_pVideoPlayer->ProcessOverlays(&m_picture, pts, overlayDelay);
 
       if (bOutPic)
       {
-         outPicResult = m_pVideoPlayer->OutputPicture(&m_picture, pts, videoDelay, outputSpeed, prevOutputSpeed);
+CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideoOutput::Process pts: %f playerSpeed: %i prevOutputSpeed: %i bOutputEarly: %i", pts, playerSpeed, prevOutputSpeed, (int)bOutputEarly);
+         outPicResult = m_pVideoPlayer->OutputPicture(&m_picture, pts + videoDelay, playerSpeed, 
+                                                       prevOutputSpeed, bOutputEarly, bResync);
          if (!(outPicResult & (EOS_DROPPED | EOS_ABORT)) && (m_state == VO_STATE_WAITINGPLAYERSTART))
          {
             outPicResult |= EOS_STARTED; //tell player we have started outputting to inform it that it can now fully start
@@ -423,26 +542,31 @@ void CDVDPlayerVideoOutput::Process()
         g_application.NewFrame();
       }
 
-      lastOutputClock = CDVDClock::GetAbsoluteClock(true);
+      prevOutputClock = m_pClock->GetAbsoluteClock(true);
       // if we have a result to send back to player do so
       if (outPicResult)
          SendPlayerMessage(outPicResult);
 
       // guess next frame pts
       // required for future pics with no pts value
+      prevOutputPts = pts;
       if (bOutPic && playerSpeed != DVD_PLAYSPEED_PAUSE && pts != DVD_NOPTS_VALUE)
          pts = pts + frametime * playerSpeed / abs(playerSpeed);
       else if (bOutputOverlay && pts != DVD_NOPTS_VALUE)
-          pts += clock - lastOutputClock;
+          pts += clock - prevOutputClock;
 
     } //end output section
     
-    // set quiesced if we were quiescing and have no msgs and player is paused (now that we have done any ouptut)
-    if (m_state == VO_STATE_QUIESCING && playerSpeed == DVD_PLAYSPEED_PAUSE && ToMessageQIsEmpty())
+    if (m_state != VO_STATE_WAITINGPLAYERSTART && playerSpeed == DVD_PLAYSPEED_PAUSE && ToMessageQIsEmpty())
        m_state = VO_STATE_QUIESCED; //now quiesced
 
     { //message waiting section
+      if (bTimeoutTryPic)
+         timeoutStartClock = m_pClock->GetAbsoluteClock(true);  //reset timeout start 
+      else
+         timeoutStartClock = prevOutputClock;
       bTimeoutTryPic = false;
+
       // determine standard wait
       int wait = 100;
       if (bExpectMsgDelay)
@@ -458,8 +582,8 @@ void CDVDPlayerVideoOutput::Process()
       {
         // log timeout only after 5 seconds and set bTimeoutTryPic
         m_toMsgSignal.WaitMSec(wait);
-        clock = CDVDClock::GetAbsoluteClock(true);
-        if (clock - lastOutputClock > DVD_MSEC_TO_TIME(5000))
+        clock = m_pClock->GetAbsoluteClock(true);
+        if (clock - timeoutStartClock > DVD_MSEC_TO_TIME(5000))
         {
           CLog::Log(LOGWARNING,"CDVDPlayerVideoOutput::Process - timeout waiting for message (player not started), forcing trypic");
           bTimeoutTryPic = true;
@@ -470,8 +594,8 @@ void CDVDPlayerVideoOutput::Process()
         // log timeout and set bTimeoutTryPic after 2s
         if (!m_toMsgSignal.WaitMSec(wait))
            CLog::Log(LOGNOTICE,"CDVDPlayerVideoOutput::Process - timeout waiting for message (player speed: %i)", playerSpeed);
-        clock = CDVDClock::GetAbsoluteClock(true);
-        if (clock - lastOutputClock > DVD_MSEC_TO_TIME(2000))
+        clock = m_pClock->GetAbsoluteClock(true);
+        if (clock - timeoutStartClock > DVD_MSEC_TO_TIME(2000))
         {
           CLog::Log(LOGNOTICE,"CDVDPlayerVideoOutput::Process forcing trypic");
           bTimeoutTryPic = true;

@@ -685,7 +685,7 @@ void CDVDPlayerAudio::HandleSyncError(double duration)
 
   //if( fabs(error) > DVD_MSEC_TO_TIME(100) || m_syncclock )
   //audio based clock sync is bad idea for smooth video
-  if( fabs(error) > DVD_MSEC_TO_TIME(500) )
+  if( fabs(error) > DVD_MSEC_TO_TIME(300) && !(m_pClock->VideoIsController()))
   {
     m_pClock->Discontinuity(clock+error);
     if(m_speed == DVD_PLAYSPEED_NORMAL)
@@ -700,8 +700,9 @@ void CDVDPlayerAudio::HandleSyncError(double duration)
 
     return;
   }
-  else if( fabs(error) > DVD_MSEC_TO_TIME(200) )
+  else if( fabs(error) > DVD_MSEC_TO_TIME(250) )
   {
+    //TODO: this is temporary until I sort out audio to clock sync during video resync
     m_skipdupcount = (int)(error / 2 / duration); //just simple fast converge towards correct value until under this threshold
 
     m_errorbuff = 0;
@@ -737,13 +738,15 @@ void CDVDPlayerAudio::HandleSyncError(double duration)
     m_errorbuff = 0;
     m_errorcount = 0;
 
-    if (m_synctype == SYNC_DISCON)
+    if (m_synctype == SYNC_DISCON && !(m_pClock->VideoIsController()))
     {
       double limit, error;
-      if (g_VideoReferenceClock.GetRefreshRate(&limit) > 0)
+      //if (g_VideoReferenceClock.GetRefreshRate(&limit) > 0)
+      limit = m_pClock->GetTickInterval();
+      if (limit > 0.001)
       {
         //when the videoreferenceclock is running, the discontinuity limit is one vblank period
-        limit *= DVD_TIME_BASE;
+        //limit *= DVD_TIME_BASE;
 
         //make error a multiple of limit, rounded towards zero,
         //so it won't interfere with the sync methods in CXBMCRenderManager::WaitPresentTime
@@ -765,7 +768,8 @@ void CDVDPlayerAudio::HandleSyncError(double duration)
           CLog::Log(LOGDEBUG, "CDVDPlayerAudio:: Discontinuity - was:%f, should be:%f, error:%f", clock, clock+error, error);
       }
     }
-    else if (m_synctype == SYNC_SKIPDUP && m_skipdupcount == 0 && fabs(m_error) > DVD_MSEC_TO_TIME(10))
+    else if ( (m_synctype == SYNC_SKIPDUP || (m_synctype == SYNC_DISCON && m_pClock->VideoIsController())) 
+             && m_skipdupcount == 0 && fabs(m_error) > DVD_MSEC_TO_TIME(10))
     {
       //check how many packets to skip/duplicate
       m_skipdupcount = (int)(m_error / duration);
@@ -832,6 +836,7 @@ bool CDVDPlayerAudio::OutputPacket(DVDAudioFrame &audioframe)
 
       proportional = m_error / DVD_TIME_BASE / proportionaldiv;
     }
+    //TODO: get rid of g_VideoReferenceClock and move to a dvd clock class function for speed ratio
     m_resampleratio = 1.0 / g_VideoReferenceClock.GetSpeed() + proportional + m_integral;
     m_resampler.SetRatio(m_resampleratio);
 

@@ -99,17 +99,21 @@ public:
 
   bool GetAllowDecodeDrop() { CSharedLock lock(m_frameRateSection); return m_bAllowDrop; }
 
+  double GetCurrentDisplayToClockDelta();
+  double GetCurrentDisplayToClockDelta(int& dPlaySpeed, double& clock, double& pts);
   double GetCurrentDisplayPts();
+  double GetCurrentDisplayPts(int& dPlaySpeed, double& dCallClock);
+
   double GetCurrentPts();
   double GetOutputDelay(); /* returns the expected delay, from that a packet is put in queue */
   std::string GetPlayerInfo();
   int GetVideoBitrate();
 
   void SetSpeed(int iSpeed);
-  int OutputPicture(const DVDVideoPicture* src, double pts, double delay, int playspeed, int prevplayspeed);
+  int OutputPicture(const DVDVideoPicture* src, double pts, int playSpeed, int prevPlaySpeed = 0, bool outputEarly = false, bool resync = false);
   bool CheckRenderConfig(const DVDVideoPicture* src);
   void ResumeAfterRefreshChange();
-  double GetCorrectedPicturePts(double pts, double& frametime); // return pattern corrected video picture pts and calculated frametime
+  double GetCorrectedPicturePts(double pts, double& frametime); //return pattern corrected video picture pts and calculated frametime
 
 #ifdef HAS_VIDEO_PLAYBACK
   int ProcessOverlays(DVDVideoPicture* pSource, double pts, double delay);

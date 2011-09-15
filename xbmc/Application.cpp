@@ -364,6 +364,7 @@ CApplication::CApplication(void) : m_itemCurrentFile(new CFileItem), m_progressT
   m_currentStack = new CFileItemList;
 
   m_frameCount = 0;
+  m_lastNotPausedTime = 0;
 
   m_bPresentFrame = false;
   m_bPlatformDirectories = true;
@@ -2027,7 +2028,13 @@ void CApplication::Render()
     bool extPlayerActive = m_eCurrentPlayer >= EPC_EXTPLAYER && IsPlaying() && !m_AppFocused;
 
     m_bPresentFrame = false;
-    if (!extPlayerActive && g_graphicsContext.IsFullScreenVideo() && !IsPaused())
+    
+    //if (!extPlayerActive && g_graphicsContext.IsFullScreenVideo() && !IsPaused())
+    unsigned int now = XbmcThreads::SystemClockMillis();
+    if (!IsPaused())
+       m_lastNotPausedTime = XbmcThreads::SystemClockMillis();
+      
+    if (!extPlayerActive && g_graphicsContext.IsFullScreenVideo() && (!IsPaused() || now - m_lastNotPausedTime < 1000))
     {
       CSingleLock lock(m_frameMutex);
 

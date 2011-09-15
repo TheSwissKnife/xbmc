@@ -174,6 +174,7 @@ void CXBMCRenderManager::WaitPresentTime(double presenttime, bool reset_corr /* 
   // target wait should be earlier by 1 frametime to get to frontbuffer + targetpos as well as signal to view delay
   // and finally corrected by our wait clock tracking correction factor (m_presentcorr)
   double targetwaitclock = presenttime - ((1 + targetpos) * frametime) - signal_to_view_delay;
+CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::WaitPresentTime targetwaitclock: %f presenttime: %f", targetwaitclock, presenttime);
   targetwaitclock += presentcorr * frametime;  //adjust by our accumulated correction
 
   // we now wait and wish our clock tick result to be targetpos out from target wait
@@ -937,6 +938,8 @@ void CXBMCRenderManager::UpdateDisplayInfo()
   {
      bFrameChange = true;
   }
+  else
+    return;
 
   // get the vblank clock tick time following m_postflipclock value
   double clocktickafterpostflipclock = CDVDClock::GetNextAbsoluteClockTick(m_postflipclock * DVD_TIME_BASE) / DVD_TIME_BASE;
@@ -947,8 +950,8 @@ void CXBMCRenderManager::UpdateDisplayInfo()
   CExclusiveLock lock(m_sharedDisplayInfoSection); //now we can update the info variables.
       
   m_flipasync = true; //TODO: get application to tell render manager if we are async or not
-  if (bFrameChange)
-  {
+  //if (bFrameChange)
+  //{
      for (int i = NUM_DISPLAYINFOBUF - 1; i > 0; i--)
      {
          m_displayinfo[i].frameclock = m_displayinfo[i-1].frameclock;
@@ -958,12 +961,12 @@ void CXBMCRenderManager::UpdateDisplayInfo()
          m_displayinfo[i].framepts = m_displayinfo[i-1].framepts;
          m_displayinfo[i].frameId = m_displayinfo[i-1].frameId;
      }
-  }
-  m_displayinfo[0].framepts = m_renderinfo.framepts;
-  m_displayinfo[0].frameId = m_renderinfo.frameId;
-  m_displayinfo[0].frameplayspeed = m_renderinfo.frameplayspeed;
-  m_displayinfo[0].framedur = m_renderinfo.framedur;  
-  m_displayinfo[0].refreshdur = displayrefreshdur;
+     m_displayinfo[0].framepts = m_renderinfo.framepts;
+     m_displayinfo[0].frameId = m_renderinfo.frameId;
+     m_displayinfo[0].frameplayspeed = m_renderinfo.frameplayspeed;
+     m_displayinfo[0].framedur = m_renderinfo.framedur;  
+     m_displayinfo[0].refreshdur = displayrefreshdur;
+  //}
 
   // now we need to establish values for m_displayinfo[0].frameclock, and if 
   // possible m_refdisplayinfo.frameclock, m_refdisplayinfo.frameplayspeed, m_refdisplayinfo.frameplaypts 
@@ -1023,8 +1026,9 @@ void CXBMCRenderManager::UpdateDisplayInfo()
   double displayframeclock1 = m_displayinfo[1].frameclock;
   double displayframeclock2 = m_displayinfo[2].frameclock;
   double displayframeclock3 = m_displayinfo[3].frameclock;
-  if (bFrameChange &&
-      frameplayspeed1 == frameplayspeed2 && 
+  //if (bFrameChange &&
+  //    frameplayspeed1 == frameplayspeed2 && 
+  if (frameplayspeed1 == frameplayspeed2 && 
       frameplayspeed1 == DVD_PLAYSPEED_NORMAL && 
       displayframeclock1 != DVD_NOPTS_VALUE && displayframeclock2 != DVD_NOPTS_VALUE &&
       displayrefreshdur != 0.0 && fps > 0 &&
@@ -1061,7 +1065,7 @@ void CXBMCRenderManager::NotifyDisplayFlip()
   UpdatePostFlipClock();
   UpdateDisplayInfo();
 
-CLog::Log(LOGDEBUG, "CXBMCRenderManager::NotifyDisplayFlip called with m_renderinfo.framepts: %f", m_renderinfo.framepts);
+CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::NotifyDisplayFlip called with m_renderinfo.framepts: %f", m_renderinfo.framepts);
 
   CRetakeLock<CExclusiveLock> lock(m_sharedSection);
 
@@ -1107,13 +1111,13 @@ double CXBMCRenderManager::GetDisplayDelay()
   return 0.05 + GetDisplaySignalToViewDelay();
 }
 
-double CXBMCRenderManager::GetCurrentDisplayPts(int& playspeed)
+double CXBMCRenderManager::GetCurrentDisplayPts(int& playspeed, double& callclock)
 {
-  // return pts extrapolated in microsecnds 
+  // return pts extrapolated in microseconds 
   double samplepts;
   double sampleclock;
-  //double clock = CDVDClock::GetAbsoluteClock(true) / DVD_TIME_BASE;
   double clock = GetPresentTime();
+  callclock = clock * DVD_TIME_BASE; //let caller know the absolute clock value we based extrapolation on 
   CSharedLock lock(m_sharedDisplayInfoSection);
   playspeed = m_displayinfo[0].frameplayspeed;
   if (m_displayinfo[0].framepts == DVD_NOPTS_VALUE)
@@ -1132,13 +1136,18 @@ double CXBMCRenderManager::GetCurrentDisplayPts(int& playspeed)
      sampleclock = m_refdisplayinfo.frameclock;
   }
 
-  if ( (playspeed == DVD_PLAYSPEED_PAUSE && clock >= m_displayinfo[0].frameclock) ||
+  //if ( (playspeed == DVD_PLAYSPEED_PAUSE && clock >= m_displayinfo[0].frameclock) ||
+  if ( (playspeed == DVD_PLAYSPEED_PAUSE) ||
        (clock >= m_displayinfo[0].frameclock + m_displayinfo[0].refreshdur) ) 
+  {
+CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::GetCurrentDisplayPts called with m_displayinfo[0].framepts %f", m_displayinfo[0].framepts);
      return m_displayinfo[0].framepts;
+  }
   else 
   {
-     double interpolatepts = samplepts + ((double)(playspeed / DVD_PLAYSPEED_NORMAL) * (clock - sampleclock) * DVD_TIME_BASE);
-     return interpolatepts;
+     double interpolatedpts = samplepts + ((double)(playspeed / DVD_PLAYSPEED_NORMAL) * (clock - sampleclock) * DVD_TIME_BASE);
+CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::GetCurrentDisplayPts called with m_displayinfo[0].frameclock %f clock: %f m_displayinfo[0].framepts: %f m_refdisplayinfo.framepts: %f m_refdisplayinfo.frameclock: %f sampleclock: %f samplepts: %f playspeed: %i interpolatepts: %f", m_displayinfo[0].frameclock, clock, m_displayinfo[0].framepts, m_refdisplayinfo.framepts, m_refdisplayinfo.frameclock, sampleclock, samplepts, playspeed, interpolatedpts);
+     return interpolatedpts;
   }
 }
 

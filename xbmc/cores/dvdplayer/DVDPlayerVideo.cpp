@@ -349,17 +349,17 @@ void CDVDPlayerVideo::Process()
     {
         // reset our last decoded picture clock tracking
         m_fLastDecodedPictureClock = DVD_NOPTS_VALUE;
-        if (speed == DVD_PLAYSPEED_PAUSE)
-        {
-          // tell output thread the new speed (for now only implement pause)
+        //if (speed == DVD_PLAYSPEED_PAUSE)
+        //{
+          // tell output thread the new speed 
           ToOutputMessage toMsg;
           toMsg.iCmd = VOCMD_SPEEDCHANGE;
           toMsg.iSpeed = speed;
           toMsg.bPlayerStarted = m_started;
           //TODO: consider error handling and msg delivery timeout here too
-CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo::Process sending VOCMD_SPEEDCHANGE msg");
+CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo::Process sending VOCMD_SPEEDCHANGE msg speed: %i started: %i", toMsg.iSpeed, (int)toMsg.bPlayerStarted);
           m_pVideoOutput->SendMessage(toMsg);
-      }
+      //}
     }
 
     double frametime = (double)DVD_TIME_BASE / GetFrameRate(); //need to re-evaluate as m_fFrameRate can be initially wrong
@@ -1024,15 +1024,15 @@ int CDVDPlayerVideo::CalcDropRequirement()
 
   int iCalcId = m_dropinfo.iCalcId; //calculation id reset only at stream change
   m_dropinfo.iCalcId++;
-  int iDPlaySpeed = -999;  //init invalid playspeed
+  int iDPlaySpeed;
+  double fCurClock;
+  double fDPts;
 
-  double fCurClock = m_pClock->GetClock(true);
-  double fDPts = g_renderManager.GetCurrentDisplayPts(iDPlaySpeed);
-  if (fDPts == DVD_NOPTS_VALUE || iDPlaySpeed == DVD_PLAYSPEED_PAUSE || iDPlaySpeed == -999)
-{
-CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo fDPts == DVD_NOPTS_VALUE || iDPlaySpeed == DVD_PLAYSPEED_PAUSE || iDPlaySpeed == -999");
+  //double fCurClock = m_pClock->GetClock(true);
+  //double fDPts = g_renderManager.GetCurrentDisplayPts(iDPlaySpeed);
+  double fCurLateness = -1 * GetCurrentDisplayToClockDelta(iDPlaySpeed, fCurClock, fDPts);
+  if (fDPts == DVD_NOPTS_VALUE || iDPlaySpeed == DVD_PLAYSPEED_PAUSE)
      return 0;
-}
 
   int64_t Now = CurrentHostCounter();
   int iDropRequestDistance = 0; //min distance in call iterations between drop requests (0 meaning ok to drop every time)
@@ -1052,8 +1052,10 @@ CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo fDPts == DVD_NOPTS_VALUE || iDPlaySpee
   int iDropMore = m_dropinfo.iVeryLateCount / 50;
   int iDecoderDrops = m_iDecoderDroppedFrames;
 
-  // allow to go 5% past half a display frame late before considering as late, limited to 4ms min
-  double fLatenessThreshold = std::max(DVD_MSEC_TO_TIME(4), (fDInterval / 2) * 1.05);
+  // allow to go 5% past half a display frame late before considering as late, limited to 2ms min
+  double fLatenessThreshold = std::max(DVD_MSEC_TO_TIME(2), (fDInterval / 2) * 1.05);
+  double fLateness = fCurLateness - fLatenessThreshold; //what we consider as late
+
   // threshold drop ratio where for anything higher we need to consider dropping before being late
   double fDropRatioThreshold = 1.0 / 50; //1 in 50
 
@@ -1115,31 +1117,31 @@ CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo iClockSpeed != iDPlaySpeed || iDPlaySp
   if (iDPlaySpeed > 0)
   {
      // store sample info
-     m_dropinfo.fLatenessSamp[curidx] = fCurClock - fDPts;
+     m_dropinfo.fLatenessSamp[curidx] = fCurLateness;
      m_dropinfo.fClockSamp[curidx] = fCurClock;
      m_dropinfo.iDecoderDropSamp[curidx] = iDecoderDrops;
      m_dropinfo.iCalcIdSamp[curidx] = iCalcId;
      m_dropinfo.iCurSampIdx = (curidx + 1) % DROPINFO_SAMPBUFSIZE;
 
      bool bAllowDecodeDrop = GetAllowDecodeDrop();
-     double fLateness = fCurClock - fDPts - fLatenessThreshold;
 
      if (Now - m_dropinfo.iLastOutputPictureTime > 150 * CurrentHostFrequency() / 1000 || m_iNrOfPicturesNotToSkip > 0)
      {
-        //we aim to not drop at all when we have not output in say 150ms or we have been asked not to skip
-        m_dropinfo.iDropNextFrame = 0;
+        // we aim to not drop at all when we have not output in say 150ms or we have been asked not to skip
+        ;
      }
      else if (!bAllowDecodeDrop)
      {
         // drop on output at intervals in line with lateness
-        m_dropinfo.iDropNextFrame = 0;
         if (fLateness > DVD_MSEC_TO_TIME(50))
-           iDropRequestDistance = 10;
+           iDropRequestDistance = 15;
         if (fLateness > DVD_MSEC_TO_TIME(100))
-           iDropRequestDistance = 8;
+           iDropRequestDistance = 10;
         else if (fLateness > DVD_MSEC_TO_TIME(150))
-           iDropRequestDistance = 6;
+           iDropRequestDistance = 8;
         else if (fLateness > DVD_MSEC_TO_TIME(200))
+           iDropRequestDistance = 6;
+        else if (fLateness > DVD_MSEC_TO_TIME(300))
            iDropRequestDistance = 4;
         if (iDropRequestDistance > 0 && iLastOutputDropRequestCalcId + iDropRequestDistance < iCalcId)
            m_dropinfo.iDropNextFrame = DC_OUTPUT;
@@ -1160,8 +1162,6 @@ CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo iClockSpeed != iDPlaySpeed || iDPlaySp
         // decoder drop request skipping this every 4 or 5
         if (m_dropinfo.iSuccessiveDecoderDropRequests <= 3 + iOsc + iDropMore)
            m_dropinfo.iDropNextFrame = DC_DECODER;
-        else
-           m_dropinfo.iDropNextFrame = 0;
         m_dropinfo.fDropRatio = std::max(m_dropinfo.fDropRatio, 0.04);
         m_dropinfo.iVeryLateCount++;
      }
@@ -1170,8 +1170,6 @@ CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo iClockSpeed != iDPlaySpeed || iDPlaySp
         // decoder drop request skipping this every 3 or 4
         if (m_dropinfo.iSuccessiveDecoderDropRequests <= 2 + iOsc + iDropMore)
            m_dropinfo.iDropNextFrame = DC_DECODER;
-        else
-           m_dropinfo.iDropNextFrame = 0;
         m_dropinfo.fDropRatio = std::max(m_dropinfo.fDropRatio, 0.02);
         m_dropinfo.iVeryLateCount++;
      }
@@ -1180,8 +1178,6 @@ CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo iClockSpeed != iDPlaySpeed || iDPlaySp
         // decoder drop request skipping this every 2 or 3
         if (m_dropinfo.iSuccessiveDecoderDropRequests <= 1 + iOsc + iDropMore)
            m_dropinfo.iDropNextFrame = DC_DECODER;
-        else
-           m_dropinfo.iDropNextFrame = 0;
         m_dropinfo.fDropRatio = std::max(m_dropinfo.fDropRatio, 0.01);
         m_dropinfo.iVeryLateCount++;
      }
@@ -1214,7 +1210,7 @@ CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo iClockSpeed != iDPlaySpeed || iDPlaySp
         if (m_dropinfo.fDropRatio > fDropRatioThreshold)
         {
            iSampleDistance = 5;
-           fClockDistance = DVD_MSEC_TO_TIME(250);
+           fClockDistance = DVD_MSEC_TO_TIME(350);
         }
 
         while (!bGotSamplesTMinus1)
@@ -1265,14 +1261,13 @@ CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo iClockSpeed != iDPlaySpeed || iDPlaySp
            fLatenessAvgTMinus1 = (fSampleSumTMinus1 / iSampleNumTMinus1) - fLatenessThreshold;
            // now calculate drop ratio and update...
            // and always try to reduce current drop a little (so we attempt to force it down)
-           double incr = 0.02 * std::max(0.0, (fLatenessAvgT - fLatenessAvgTMinus1) / (fClockMidT - fClockMidTMinus1));
+           // so increase by 3% of lateness increase, but reduce the original by 0.5%
+           double incr = 0.03 * std::max(0.0, (fLatenessAvgT - fLatenessAvgTMinus1) / (fClockMidT - fClockMidTMinus1));
            // if we are not getting later and we are not late then reduce m_dropinfo.fDropRatio with more rapidity
            if (fLatenessAvgT <= 0.0 && fLatenessAvgT <= fLatenessAvgTMinus1)
               m_dropinfo.fDropRatio = 0.99 * m_dropinfo.fDropRatio;
            else
-              m_dropinfo.fDropRatio = std::max(0.0, (0.999 * m_dropinfo.fDropRatio) + incr);
-           //m_dropinfo.fDropRatio = std::max(0.0, (fLatenessAvgT - fLatenessAvgTMinus1) / (fClockMidT - fClockMidTMinus1) +
-           //           0.95 * (fDecoderDropRatioT + fDecoderDropRatioTMinus1) / 2);
+              m_dropinfo.fDropRatio = std::max(0.0, (0.995 * m_dropinfo.fDropRatio) + incr);
            m_dropinfo.fDropRatio = std::min(0.95, m_dropinfo.fDropRatio); //constrain to 0.95
 
            // store the new drop ratio in playspeed record if appropriate
@@ -1301,7 +1296,7 @@ CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo iClockSpeed != iDPlaySpeed || iDPlaySp
            else
               iDropRequestDistance = 8;
 
-           //drop request at required distance or if it seems last drop request did not succeed and we are quite late
+           // drop request at required distance or if it seems last drop request did not succeed and we are quite late
            if ((iLastDecoderDropRequestCalcId + iDropRequestDistance + iOsc < iCalcId) ||
                  (iLastDecoderDropRequestDecoderDrops == iDecoderDrops && fLatenessAvgT > fDInterval &&
                    iLastDecoderDropRequestCalcId + 5 < iCalcId))
@@ -1855,8 +1850,14 @@ double CDVDPlayerVideo::GetCurrentPts()
 
 double CDVDPlayerVideo::GetCurrentDisplayPts()
 {
-  int playspeed;
-  return g_renderManager.GetCurrentDisplayPts(playspeed);
+  int dPlaySpeed;
+  double dCallClock;
+  return GetCurrentDisplayPts(dPlaySpeed, dCallClock);
+}
+
+double CDVDPlayerVideo::GetCurrentDisplayPts(int& dPlaySpeed, double& dCallClock)
+{
+  return g_renderManager.GetCurrentDisplayPts(dPlaySpeed, dCallClock);
 }
 
 double CDVDPlayerVideo::GetCorrectedPicturePts(double pts, double& frametime)
@@ -1872,22 +1873,14 @@ double CDVDPlayerVideo::GetCorrectedPicturePts(double pts, double& frametime)
   return pts;
 }
 
-int CDVDPlayerVideo::OutputPicture(const DVDVideoPicture* src, double pts, double delay, int playspeed, int prevplayspeed)
+int CDVDPlayerVideo::OutputPicture(const DVDVideoPicture* src, double pts, int playSpeed, int prevPlaySpeed /* = 0 */, bool outputEarly /* = false */, bool resync /* = false */)
 {
   /* picture buffer is not allowed to be modified in this call */
   DVDVideoPicture picture(*src);
   DVDVideoPicture* pPicture = &picture;
 
   int result = 0;
-  double maxfps  = 60.0;
 
-  if (!g_renderManager.IsStarted()) {
-    CLog::Log(LOGERROR, "%s - renderer not started", __FUNCTION__);
-    return EOS_ABORT;
-  }
-
-  //User set delay
-  pts += delay;
 CLog::Log(LOGDEBUG,"ASB: CDVDPlayerVideo::OutputPicture pts: %f", pts);
 
   if (pPicture->iFlags & DVP_FLAG_DROPPED)
@@ -1899,14 +1892,22 @@ CLog::Log(LOGDEBUG,"ASB: CDVDPlayerVideo::OutputPicture pts: %f", pts);
   // calculate the time we need to delay this picture before it should be displayed
   double fClockSleep, fPlayingClock, fCurrentClock, fPresentClock;
 
-  fPlayingClock = m_pClock->GetClock(fCurrentClock, true); //snapshot current clock
+  bool bUseUnPausedClock = false;
+  if (prevPlaySpeed != DVD_PLAYSPEED_PAUSE)
+  {
+     bUseUnPausedClock = true;
+  }
+
+  fPlayingClock = m_pClock->GetClock(fCurrentClock, true, bUseUnPausedClock); //snapshot current clock
   fClockSleep = pts - fPlayingClock; //sleep calculated by pts to clock comparison
 
   // correct sleep times based on speed
-  if(playspeed != DVD_PLAYSPEED_PAUSE)
-    fClockSleep = fClockSleep * DVD_PLAYSPEED_NORMAL / playspeed;
-  else if(prevplayspeed != DVD_PLAYSPEED_PAUSE)
-    fClockSleep = fClockSleep * DVD_PLAYSPEED_NORMAL / prevplayspeed;
+  if (outputEarly)
+    fClockSleep = 0;
+  else if (playSpeed != DVD_PLAYSPEED_PAUSE)
+    fClockSleep = fClockSleep * DVD_PLAYSPEED_NORMAL / playSpeed;
+  else if (prevPlaySpeed != DVD_PLAYSPEED_PAUSE)
+    fClockSleep = fClockSleep * DVD_PLAYSPEED_NORMAL / prevPlaySpeed;
   else
     fClockSleep = 0; 
 
@@ -1917,6 +1918,11 @@ CLog::Log(LOGDEBUG,"ASB: CDVDPlayerVideo::OutputPicture pts: %f", pts);
   fClockSleep = 0;
 #endif
   fPresentClock = fCurrentClock + fClockSleep;
+
+  if (!g_renderManager.IsStarted()) {
+    CLog::Log(LOGERROR, "%s - renderer not started", __FUNCTION__);
+    return EOS_ABORT;
+  }
 
   //TODO: work out what is the exact purpose of AutoCrop...team xbmc seem not to feel the need to comment the code
   AutoCrop(pPicture);
@@ -1938,21 +1944,15 @@ CLog::Log(LOGDEBUG,"ASB: CDVDPlayerVideo::OutputPicture pts: %f", pts);
     return EOS_DROPPED;
   }
 
-  index = g_renderManager.AddVideoPicture(*pPicture, pts, fPresentClock, playspeed);
+CLog::Log(LOGDEBUG,"ASB: OutputPicture About to AddVideoPicture tickClock: %f fPlayingClock: %f fPresentClock: %f fClockSleep: %f fCurrentClock: %f playSpeed: %i pts: %f prevPlaySpeed: %i, resync: %i", m_pClock->GetClock(false), fPlayingClock, fPresentClock, fClockSleep, fCurrentClock, playSpeed, pts, prevPlaySpeed, (int)resync);
+  index = g_renderManager.AddVideoPicture(*pPicture, pts, fPresentClock, playSpeed, resync);
 
   // try repeatedly for 0.5 sec to add again if it failed for some reason
   while (index < 0 && !CThread::m_bStop &&
          CDVDClock::GetAbsoluteClock(false) < fPresentClock + DVD_MSEC_TO_TIME(500) )
   {
     Sleep(2);
-    index = g_renderManager.AddVideoPicture(*pPicture, pts, fPresentClock, playspeed);
-  }
-
-  // if we are paused ensure the clock is paused too, and set the clock to match our adjusted pts
-  if (playspeed == DVD_PLAYSPEED_PAUSE)
-  {
-     m_pClock->SetSpeed(playspeed);
-     m_pClock->Discontinuity(pts);
+    index = g_renderManager.AddVideoPicture(*pPicture, pts, fPresentClock, playSpeed, resync);
   }
 
   if (index < 0)
@@ -2148,6 +2148,34 @@ void CDVDPlayerVideo::AutoCrop(DVDVideoPicture *pPicture, RECT &crop)
     crop.top = crop.bottom = min;
 }
 
+double CDVDPlayerVideo::GetCurrentDisplayToClockDelta()
+{
+  int dPlaySpeed;
+  double clock;
+  double pts;
+ 
+  return GetCurrentDisplayToClockDelta(dPlaySpeed, clock, pts);
+}
+
+double CDVDPlayerVideo::GetCurrentDisplayToClockDelta(int& dPlaySpeed, double& clock, double& pts)
+{
+  double dCallClock;
+  double fCurrentClock;
+  double fDPts = GetCurrentDisplayPts(dPlaySpeed, dCallClock); //extrapolated pts visible on display
+  double fPlayingClock = m_pClock->GetClock(fCurrentClock, true);
+  clock = fPlayingClock; //give caller the dvd playing clock value we used 
+  pts = fDPts; //give caller the pts we extrapolated
+  if (fDPts == DVD_NOPTS_VALUE)
+     return 0.0; //pretend no delta
+  else
+  {
+     double absElapsedClock = fCurrentClock - dCallClock;
+     fDPts = fDPts + absElapsedClock * (dPlaySpeed / DVD_PLAYSPEED_NORMAL); //corrected
+     pts = fDPts;
+     return fDPts - fPlayingClock;
+  }
+}
+
 std::string CDVDPlayerVideo::GetPlayerInfo()
 {
   std::ostringstream s;
@@ -2161,12 +2189,7 @@ std::string CDVDPlayerVideo::GetPlayerInfo()
   s << ")";
   s << " rdr:" << m_iPlayerDropRequests;
 
-double fDPts = GetCurrentDisplayPts();
-if (fDPts != DVD_NOPTS_VALUE)
-{
-  double display_to_clock = DVD_TIME_TO_MSEC(fDPts - m_pClock->GetClock(true));
-  s << " d/c:" << fixed << setprecision(0) << display_to_clock;
-}
+  s << " d/c:" << fixed << setprecision(0) << DVD_TIME_TO_MSEC(GetCurrentDisplayToClockDelta());
 
   int pc = GetPullupCorrectionPattern();
   if (pc > 0)

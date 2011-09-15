@@ -60,8 +60,9 @@ public:
   float GetAspectRatio() { CSharedLock lock(m_sharedSection); if (m_pRenderer) return m_pRenderer->GetAspectRatio(); else return 1.0f; };
   void Update(bool bPauseDrawing);
   void RenderUpdate(bool clear, DWORD flags = 0, DWORD alpha = 255);
-  double GetCurrentDisplayPts(int& playspeed);
+  double GetCurrentDisplayPts(int& playspeed, double& callclock);
   double GetDisplayDelay();
+  double GetDisplaySignalToViewDelay();
   void SetupScreenshot();
 
   CRenderCapture* AllocRenderCapture();
@@ -181,7 +182,6 @@ protected:
   void PresentBob();
   void PresentBlend();
   void CheckNextBuffer();
-  double GetDisplaySignalToViewDelay();
   void UpdatePostRenderClock();
   void UpdatePreFlipClock();
   void UpdatePostFlipClock();

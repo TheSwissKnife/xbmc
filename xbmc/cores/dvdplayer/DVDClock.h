@@ -42,10 +42,11 @@ public:
   CDVDClock();
   ~CDVDClock();
 
-  double GetClock(bool interpolated = true);
-  double GetClock(double& absolute, bool interpolated = true);
+  double GetClock(bool interpolated = true, bool unPausedClock = false);
+  double GetClock(double& absolute, bool interpolated = true, bool unPausedClock = false);
 
   void Discontinuity(double currentPts = 0LL);
+  void SetCurrentTickClock(double clock = 0LL);
 
   void Reset() { m_bReset = true; }
   void Pause();
@@ -53,6 +54,12 @@ public:
   void SetSpeed(int iSpeed);
   int GetSpeed();
   bool IsPaused();
+  double GetTickInterval();
+  bool SetVideoIsController(int64_t controlDurSys, int maxTickAdjustOffer = 0, int64_t tickOfferExpirySys = 0);
+  bool VideoIsController();
+  bool VideoIsController(int64_t& controlDurSys, int& maxTickAdjustOffer, int64_t& tickOfferExpirySys);
+  void SetVideoNotController();
+  bool CheckVideoControllerLease();
 
   /* tells clock at what framerate video is, to  *
    * allow it to adjust speed for a better match */
@@ -75,12 +82,17 @@ protected:
   static void   CheckSystemClock();
   static double SystemToAbsolute(int64_t system);
   static int64_t AbsoluteToSystem(double absolute);
-  double        SystemToPlaying(int64_t system);
+  double        SystemToPlaying(int64_t system, bool unPausedClock = false);
 
   CSharedSection m_critSection;
   int64_t m_systemUsed;
   int64_t m_startClock;
   int64_t m_pauseClock;
+  int64_t m_videoControlDurSys;
+  int64_t m_videoControlAdjustOfferExpirySys;
+  int64_t m_videoControlLeaseStart;
+  int m_videoControlMaxTickAdjustOffer;
+  bool m_videoIsController;
   double m_iDisc;
   int m_speed;
   bool m_bReset;
@@ -92,5 +104,6 @@ protected:
   double           m_maxspeedadjust;
   bool             m_speedadjust;
   CCriticalSection m_speedsection;
+  CSharedSection   m_controlLeaseSection;
   static bool      m_ismasterclock;
 };

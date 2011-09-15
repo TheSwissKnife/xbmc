@@ -38,7 +38,6 @@ enum VOCMD_TYPE
 VOCMD_NOCMD = 0,          
 VOCMD_NEWPIC,             //new picture from video player is ready
 VOCMD_PROCESSOVERLAYONLY, //just process overlays
-VOCMD_FLUSHSTREAM,        //video player has flushed stream
 VOCMD_FINISHSTREAM,       //video player has finished stream
 VOCMD_DEALLOCPIC,         //video player wishes current pic to be de-allocated 
 VOCMD_SPEEDCHANGE,        //video player has changed play speed 
@@ -51,9 +50,9 @@ VO_STATE_NONE = 0,
 VO_STATE_RECOVER,             //recovering
 VO_STATE_WAITINGPLAYERSTART,  //waiting for player to tell us it has fully started
 VO_STATE_RENDERERCONFIGURING, //waiting for renderer to be configured
-VO_STATE_CLOCKSYSNC,          //syncing clock to output pts (...it must make video the master, sync the clock, then after say 10 seconds resign control)
+VO_STATE_SYNCCLOCK,           //syncing clock to output pts after un-pause
+VO_STATE_SYNCCLOCKFLUSH,      //syncing clock to output pts after decoder flush/start
 VO_STATE_OVERLAYONLY,         //just processng overlays
-VO_STATE_QUIESCING,           //moving to state of QUIESCED
 VO_STATE_QUIESCED,            //state of not expecting regular pic msgs to process and previous fully processed
 VO_STATE_NORMALOUTPUT         //processing pics and overlays as normal
 };
@@ -112,6 +111,7 @@ protected:
   bool Recovering();
   void SetRecovering(bool recover = true);
   bool ToMessageQIsEmpty();
+  bool ResyncClockToVideo(double pts, int playerSpeed, bool bFlushed = false);
   ToOutputMessage GetToMessage();
 
   double m_pts;

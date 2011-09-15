@@ -73,7 +73,7 @@ class CVideoReferenceClock : public CThread
     bool    SetSpeed(double Speed);
     double  GetSpeed();
     int     GetRefreshRate(double* interval = NULL);
-    int64_t  ConvertSystemDurToClockDur(int64_t duration);
+    int64_t ConvertSystemDurToClockDur(int64_t duration);
 
     int64_t DurUntilNextVBlank(int64_t ClockInterval = 0);
     int64_t TimeOfNextVBlank(int64_t wait = 0, int safetyTolerance = 0);

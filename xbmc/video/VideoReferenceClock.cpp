@@ -1606,7 +1606,7 @@ int CVideoReferenceClock::GetRefreshRate(double* interval /*= NULL*/)
   if (m_UseVblank)
   {
     if (interval)
-      *interval = m_ClockSpeed / m_RefreshRate;
+      *interval = m_ClockSpeed * m_fineadjust / (double)m_RefreshRate;
     return (int)m_RefreshRate;
   }
   else
@@ -1798,7 +1798,7 @@ int64_t CVideoReferenceClock::DurUntilNextVBlank(int64_t ClockInterval /* = 0 */
        pVBlankInterval = m_SystemFrequency / m_RefreshRate;
 
     if (clockTickInterval == 0.0)
-        clockTickInterval = m_ClockSpeed / m_RefreshRate * m_SystemFrequency;
+        clockTickInterval = UpdateInterval();
 
     SingleLock.Leave();
     int64_t Now = CurrentHostCounter();        //get current system time
