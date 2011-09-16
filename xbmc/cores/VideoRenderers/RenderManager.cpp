@@ -953,8 +953,8 @@ void CXBMCRenderManager::UpdateDisplayInfo()
   CExclusiveLock lock(m_sharedDisplayInfoSection); //now we can update the info variables.
       
   m_flipasync = true; //TODO: get application to tell render manager if we are async or not
-  //if (bFrameChange)
-  //{
+  if (bFrameChange)
+  {
      for (int i = NUM_DISPLAYINFOBUF - 1; i > 0; i--)
      {
          m_displayinfo[i].frameclock = m_displayinfo[i-1].frameclock;
@@ -969,53 +969,53 @@ void CXBMCRenderManager::UpdateDisplayInfo()
      m_displayinfo[0].frameplayspeed = m_renderinfo.frameplayspeed;
      m_displayinfo[0].framedur = m_renderinfo.framedur;  
      m_displayinfo[0].refreshdur = displayrefreshdur;
-  //}
 
-  // now we need to establish values for m_displayinfo[0].frameclock, and if 
-  // possible m_refdisplayinfo.frameclock, m_refdisplayinfo.frameplayspeed, m_refdisplayinfo.frameplaypts 
-  if (fps > 0 && displayrefreshdur > 0.001) //vblank based smooth video and plausible refresh duration
-  {
-     if (m_flipasync) 
+     // now we need to establish values for m_displayinfo[0].frameclock, and if 
+     // possible m_refdisplayinfo.frameclock, m_refdisplayinfo.frameplayspeed, m_refdisplayinfo.frameplaypts 
+     if (fps > 0 && displayrefreshdur > 0.001) //vblank based smooth video and plausible refresh duration
      {
-        // 6ms overrun across a vblank to signify it must have waited for a previous flip to complete
-        double flipclockoverrundur = 0.006;
-        // min of {8ms, half tick duration} safe allowance for outstanding render opengl 
-        // commands to complete before a vblank
-        double renderallowance = std::min(0.008, 0.5 * displayrefreshdur);
-
-        // the vblank clock tick time following m_preflipclock value 
-        double clocktickafterpreflipclock = clocktickafterpostflipclock;
-        while (clocktickafterpreflipclock > m_preflipclock)
-               clocktickafterpreflipclock -= displayrefreshdur;  //reduce to just before
-        clocktickafterpreflipclock = clocktickafterpreflipclock + displayrefreshdur;  //finally take it forward one tick
-        // standard estimate is that all is well and frame will be on front buffer at vblank after flip
-        m_displayinfo[0].frameclock = clocktickafterpostflipclock + signal_to_view_delay;
- 
-        if ( (m_postflipclock > clocktickafterpreflipclock && 
-             clocktickafterpostflipclock - clocktickafterpreflipclock > flipclockoverrundur) ||
-                (m_postflipclock < clocktickafterpreflipclock && 
-                 clocktickafterpreflipclock - m_postrenderclock > renderallowance) )
+        if (m_flipasync) 
         {
-           // the clock estimate is considered reference quality
-           m_refdisplayinfo.frameclock = m_displayinfo[0].frameclock;
+           // 6ms overrun across a vblank to signify it must have waited for a previous flip to complete
+           double flipclockoverrundur = 0.006;
+           // min of {8ms, half tick duration} safe allowance for outstanding render opengl 
+           // commands to complete before a vblank
+           double renderallowance = std::min(0.008, 0.5 * displayrefreshdur);
+
+           // the vblank clock tick time following m_preflipclock value 
+           double clocktickafterpreflipclock = clocktickafterpostflipclock;
+           while (clocktickafterpreflipclock > m_preflipclock)
+                  clocktickafterpreflipclock -= displayrefreshdur;  //reduce to just before
+           clocktickafterpreflipclock = clocktickafterpreflipclock + displayrefreshdur;  //finally take it forward one tick
+           // standard estimate is that all is well and frame will be on front buffer at vblank after flip
+           m_displayinfo[0].frameclock = clocktickafterpostflipclock + signal_to_view_delay;
+ 
+           if ( (m_postflipclock > clocktickafterpreflipclock && 
+                clocktickafterpostflipclock - clocktickafterpreflipclock > flipclockoverrundur) ||
+                   (m_postflipclock < clocktickafterpreflipclock && 
+                    clocktickafterpreflipclock - m_postrenderclock > renderallowance) )
+           {
+              // the clock estimate is considered reference quality
+              m_refdisplayinfo.frameclock = m_displayinfo[0].frameclock;
+              m_refdisplayinfo.framepts = m_displayinfo[0].framepts;
+              m_refdisplayinfo.frameplayspeed = m_displayinfo[0].frameplayspeed;
+           }
+        }
+        else if (!m_flipasync)
+        {
+           // just assume the vblank before postflip clock is displayclock
+           m_refdisplayinfo.frameclock = clocktickafterpostflipclock - displayrefreshdur + signal_to_view_delay;
            m_refdisplayinfo.framepts = m_displayinfo[0].framepts;
            m_refdisplayinfo.frameplayspeed = m_displayinfo[0].frameplayspeed;
+           m_displayinfo[0].frameclock = m_refdisplayinfo.frameclock;          
         }
      }
-     else if (!m_flipasync)
+     else
      {
-        // just assume the vblank before postflip clock is displayclock
-        m_refdisplayinfo.frameclock = clocktickafterpostflipclock - displayrefreshdur + signal_to_view_delay;
-        m_refdisplayinfo.framepts = m_displayinfo[0].framepts;
-        m_refdisplayinfo.frameplayspeed = m_displayinfo[0].frameplayspeed;
-        m_displayinfo[0].frameclock = m_refdisplayinfo.frameclock;          
+        // just estimate this from postflipclock + half display duration + signal to view delay
+        m_displayinfo[0].frameclock = m_postflipclock + (displayrefreshdur / 2) ;
      }
-  }
-  else
-  {
-     // just estimate this from postflipclock + half display duration + signal to view delay
-     m_displayinfo[0].frameclock = m_postflipclock + (displayrefreshdur / 2) ;
-  }
+  } //end bFrameChange
 
 //TODO: change framedur to pts ?
   // if we didn't change speed or duration, and at normal speed and using smooth video then 
@@ -1023,33 +1023,33 @@ void CXBMCRenderManager::UpdateDisplayInfo()
   int frameplayspeed1 = m_displayinfo[1].frameplayspeed;
   int frameplayspeed2 = m_displayinfo[2].frameplayspeed;
   int frameplayspeed3 = m_displayinfo[3].frameplayspeed;
-  double displayframedur1 = m_displayinfo[1].framedur;
-  double displayframedur2 = m_displayinfo[2].framedur;
-  double displayframedur3 = m_displayinfo[3].framedur;
+  double displayframepts1 = m_displayinfo[1].framepts;
+  double displayframepts2 = m_displayinfo[2].framepts;
+  double displayframepts3 = m_displayinfo[3].framepts;
+  //double displayframedur1 = m_displayinfo[1].framedur;
+  //double displayframedur2 = m_displayinfo[2].framedur;
+  //double displayframedur3 = m_displayinfo[3].framedur;
+  double displayframedur1 = displayframepts1 - displayframepts2;
+  double displayframedur2 = displayframepts2 - displayframepts3;
   double displayframeclock1 = m_displayinfo[1].frameclock;
   double displayframeclock2 = m_displayinfo[2].frameclock;
   double displayframeclock3 = m_displayinfo[3].frameclock;
-  //if (bFrameChange &&
-  //    frameplayspeed1 == frameplayspeed2 && 
   if (frameplayspeed1 == frameplayspeed2 && 
       frameplayspeed1 == DVD_PLAYSPEED_NORMAL && 
       displayframeclock1 != DVD_NOPTS_VALUE && displayframeclock2 != DVD_NOPTS_VALUE &&
-      displayrefreshdur != 0.0 && fps > 0 &&
-      displayframedur1 == displayframedur2)
+      displayrefreshdur != 0.0 && fps > 0.0 &&
+      displayframepts1 != DVD_NOPTS_VALUE && displayframepts2 != DVD_NOPTS_VALUE)
+//      displayframedur1 == displayframedur2)
   {  
      //the elasped clock time estimate between previous pts changes
      double displayclockelapsed1 = displayframeclock1 - displayframeclock2;
      double displayclockelapsed2 = displayframeclock1 - displayframeclock3;
      if (displayclockelapsed1 > displayframedur1 + 0.5 * displayrefreshdur)
-{
         m_longdisplaycount++;
-CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::UpdateDisplayInfo LONG render frameplayspeed1: %i frameplayspeed2: %i frameplayspeed3: %i m_displayinfo[1].framepts: %f m_displayinfo[2].framepts: %f m_displayinfo[3].framepts: %f displayframedur1: %f displayframedur2: %f displayframedur3: %f displayframeclock1: %f displayframeclock2: %f displayframeclock3: %f displayrefreshdur: %f", frameplayspeed1, frameplayspeed2, frameplayspeed3, displayframedur1, displayframedur2, displayframedur3, displayframeclock1, displayframeclock2, displayframeclock3, displayrefreshdur, m_displayinfo[1].framepts, m_displayinfo[2].framepts, m_displayinfo[3].framepts);
-}
      else if (displayclockelapsed1 < displayframedur1 - 0.5 * displayrefreshdur && 
               displayclockelapsed1 > 0.9 * displayrefreshdur)
         m_shortdisplaycount++;
-     else if (displayframeclock3 != DVD_NOPTS_VALUE && 
-              displayframedur1 == displayframedur3 && 
+     else if (displayframeclock3 != DVD_NOPTS_VALUE && displayframepts3 != DVD_NOPTS_VALUE &&
               frameplayspeed1 == frameplayspeed3)
      {
         // we can look to tweak our estimates if we notice a shorter than refreshdur elapse 
@@ -1058,10 +1058,7 @@ CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::UpdateDisplayInfo LONG render fram
         if (displayclockelapsed2 > (displayframedur1 + displayframedur2) * 0.95 && 
               displayclockelapsed2 < (displayframedur1 + displayframedur2) * 1.05 &&
               displayclockelapsed1 <= 0.9 * displayrefreshdur)
-{
-CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::UpdateDisplayInfo LONG REDUCTION render frameplayspeed1: %i frameplayspeed2: %i frameplayspeed3: %i displayframedur1: %f displayframedur2: %f displayframedur3: %f displayframeclock1: %f displayframeclock2: %f displayframeclock3: %f displayrefreshdur: %f", frameplayspeed1, frameplayspeed2, frameplayspeed3, displayframedur1, displayframedur2, displayframedur3, displayframeclock1, displayframeclock2, displayframeclock3, displayrefreshdur);
            m_longdisplaycount--;
-}
      }
   }
 }
@@ -1154,7 +1151,6 @@ double CXBMCRenderManager::GetCurrentDisplayPts(int& playspeed, double& callcloc
   else 
   {
      double interpolatedpts = samplepts + ((double)(playspeed / DVD_PLAYSPEED_NORMAL) * (clock - sampleclock) * DVD_TIME_BASE);
-CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::GetCurrentDisplayPts called with m_displayinfo[0].frameclock %f clock: %f m_displayinfo[0].framepts: %f m_refdisplayinfo.framepts: %f m_refdisplayinfo.frameclock: %f sampleclock: %f samplepts: %f playspeed: %i interpolatepts: %f", m_displayinfo[0].frameclock, clock, m_displayinfo[0].framepts, m_refdisplayinfo.framepts, m_refdisplayinfo.frameclock, sampleclock, samplepts, playspeed, interpolatedpts);
      return interpolatedpts;
   }
 }
