@@ -937,6 +937,9 @@ void CXBMCRenderManager::UpdateDisplayInfo()
   if (m_renderinfo.frameId != m_displayinfo[0].frameId)
   {
      bFrameChange = true;
+     int framesDropped = m_renderinfo.frameId - m_displayinfo[0].frameId - 1;
+     if (framesDropped > 0)
+        CLog::Log(LOGWARNING, "CRenderManager::UpdateDisplayInfo detected frames dropped by RenderManager: %i", framesDropped);
   }
   else
     return;
@@ -1038,7 +1041,10 @@ void CXBMCRenderManager::UpdateDisplayInfo()
      double displayclockelapsed1 = displayframeclock1 - displayframeclock2;
      double displayclockelapsed2 = displayframeclock1 - displayframeclock3;
      if (displayclockelapsed1 > displayframedur1 + 0.5 * displayrefreshdur)
+{
         m_longdisplaycount++;
+CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::UpdateDisplayInfo LONG render frameplayspeed1: %i frameplayspeed2: %i frameplayspeed3: %i m_displayinfo[1].framepts: %f m_displayinfo[2].framepts: %f m_displayinfo[3].framepts: %f displayframedur1: %f displayframedur2: %f displayframedur3: %f displayframeclock1: %f displayframeclock2: %f displayframeclock3: %f displayrefreshdur: %f", frameplayspeed1, frameplayspeed2, frameplayspeed3, displayframedur1, displayframedur2, displayframedur3, displayframeclock1, displayframeclock2, displayframeclock3, displayrefreshdur, m_displayinfo[1].framepts, m_displayinfo[2].framepts, m_displayinfo[3].framepts);
+}
      else if (displayclockelapsed1 < displayframedur1 - 0.5 * displayrefreshdur && 
               displayclockelapsed1 > 0.9 * displayrefreshdur)
         m_shortdisplaycount++;
@@ -1052,7 +1058,10 @@ void CXBMCRenderManager::UpdateDisplayInfo()
         if (displayclockelapsed2 > (displayframedur1 + displayframedur2) * 0.95 && 
               displayclockelapsed2 < (displayframedur1 + displayframedur2) * 1.05 &&
               displayclockelapsed1 <= 0.9 * displayrefreshdur)
+{
+CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::UpdateDisplayInfo LONG REDUCTION render frameplayspeed1: %i frameplayspeed2: %i frameplayspeed3: %i displayframedur1: %f displayframedur2: %f displayframedur3: %f displayframeclock1: %f displayframeclock2: %f displayframeclock3: %f displayrefreshdur: %f", frameplayspeed1, frameplayspeed2, frameplayspeed3, displayframedur1, displayframedur2, displayframedur3, displayframeclock1, displayframeclock2, displayframeclock3, displayrefreshdur);
            m_longdisplaycount--;
+}
      }
   }
 }

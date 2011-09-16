@@ -642,7 +642,7 @@ CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo VC_HINT_HARDDRAIN");
         if (iDropDirective & DC_DECODER)
           bRequestDrop = true;
 
-        // if player want's us to drop this packet, do so nomatter what
+        // if player want's us to drop this packet, do so no matter what
         if(bPacketDrop)
         {
           m_iPlayerDropRequests++;
@@ -1111,6 +1111,7 @@ CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo iClockSpeed != iDPlaySpeed || iDPlaySp
      m_dropinfo.iVeryLateCount = 0;
   }
 
+//TODO: need to make this all work better when required to drop at high rates eg to drop upto 3 in 4
   if (iDPlaySpeed > 0)
   {
      // store sample info
@@ -1131,15 +1132,18 @@ CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo iClockSpeed != iDPlaySpeed || iDPlaySp
      {
         // drop on output at intervals in line with lateness
         if (fLateness > DVD_MSEC_TO_TIME(50))
-           iDropRequestDistance = 15;
+           iDropRequestDistance += 15;
         if (fLateness > DVD_MSEC_TO_TIME(100))
-           iDropRequestDistance = 10;
+           iDropRequestDistance += 10;
         else if (fLateness > DVD_MSEC_TO_TIME(150))
-           iDropRequestDistance = 8;
+           iDropRequestDistance += 8;
         else if (fLateness > DVD_MSEC_TO_TIME(200))
-           iDropRequestDistance = 6;
+           iDropRequestDistance += 6;
         else if (fLateness > DVD_MSEC_TO_TIME(300))
-           iDropRequestDistance = 4;
+           iDropRequestDistance += 4;
+        else if (fLateness > DVD_MSEC_TO_TIME(500))
+           iDropRequestDistance += 1;
+           
         if (iDropRequestDistance > 0 && iLastOutputDropRequestCalcId + iDropRequestDistance < iCalcId)
            m_dropinfo.iDropNextFrame = DC_OUTPUT;
      }
@@ -1892,6 +1896,7 @@ CLog::Log(LOGDEBUG,"ASB: CDVDPlayerVideo::OutputPicture pts: %f", pts);
   bool bUseUnPausedClock = false;
   if (prevPlaySpeed != DVD_PLAYSPEED_PAUSE)
   {
+     // generally use the un-paused clock otherwise we might calculate sped up present times
      bUseUnPausedClock = true;
   }
 
@@ -1907,7 +1912,11 @@ CLog::Log(LOGDEBUG,"ASB: CDVDPlayerVideo::OutputPicture pts: %f", pts);
   else if (playSpeed != DVD_PLAYSPEED_PAUSE)
     fClockSleep = fClockSleep * DVD_PLAYSPEED_NORMAL / playSpeed;
   else if (prevPlaySpeed != DVD_PLAYSPEED_PAUSE)
+  {
     fClockSleep = fClockSleep * DVD_PLAYSPEED_NORMAL / prevPlaySpeed;
+    // consider as pause speed (because previous one just before pause would have probably not told render manager of pause to come)
+    playSpeed = DVD_PLAYSPEED_PAUSE;
+  }
   else
     fClockSleep = 0; 
 
