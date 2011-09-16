@@ -2376,13 +2376,14 @@ void CDVDPlayer::SetCaching(ECacheState state)
   m_caching = state;
 }
 
-void CDVDPlayer::SetPlaySpeed(int speed)
+void CDVDPlayer::SetPlaySpeed(int speed, bool syncDemux /* = true */)
 {
   m_messenger.Put(new CDVDMsgInt(CDVDMsg::PLAYER_SETSPEED, speed));
   m_clock.SetSpeed(speed); //ASB added: surely we need to set the clock speed too
   m_dvdPlayerAudio.SetSpeed(speed);
   m_dvdPlayerVideo.SetSpeed(speed);
-  SynchronizeDemuxer(100);
+  if (syncDemux)
+     SynchronizeDemuxer(100);
 }
 
 void CDVDPlayer::Pause()
@@ -2401,7 +2402,7 @@ void CDVDPlayer::Pause()
   }
   else
   {
-    SetPlaySpeed(DVD_PLAYSPEED_PAUSE);
+    SetPlaySpeed(DVD_PLAYSPEED_PAUSE, false);
     m_callback.OnPlayBackPaused();
   }
 }

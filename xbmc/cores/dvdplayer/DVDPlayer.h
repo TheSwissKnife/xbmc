@@ -282,7 +282,7 @@ protected:
   /**
    * one of the DVD_PLAYSPEED defines
    */
-  void SetPlaySpeed(int iSpeed);
+  void SetPlaySpeed(int iSpeed, bool syncDemux = true);
   int GetPlaySpeed()                                                { return m_playSpeed; }
   void SetCaching(ECacheState state);
 
