@@ -216,7 +216,7 @@ protected:
 
   // Render Buffer State Description:
   //
-  // Output:      is the buffer about to or having its texture prepared for for render (ie from output thread).
+  // Output:      is the buffer about to or having its texture prepared for render (ie from output thread).
   //              Cannot go past the "Displayed" buffer (otherwise we will probably overwrite buffers not yet
   //              displayed or even rendered).
   // Current:     is the current buffer being or having been submitted for render to back buffer.
@@ -227,8 +227,8 @@ protected:
   // Displayed:   is the buffer that is now considered to be safely copied from back buffer to front buffer 
   //              (we assume that after two swap-buffer flips for the same "Current" render buffer that that 
   //              buffer will be safe, but otherwise we consider that only the previous-to-"Current" is guaranteed).
-  // Last:        is the last buffer successfully submitted for render to back buffer (used to rollback to in 
-  //              unexpected case where render fails.
+  // Last:        is the last buffer successfully submitted for render to back buffer (purpose: to rollback to in 
+  //              unexpected case where a texture render fails).
 
   int m_iCurrentRenderBuffer;
   int m_NumRenderBuffers;
