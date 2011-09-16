@@ -939,22 +939,28 @@ void CXBMCRenderManager::UpdateDisplayInfo()
      bFrameChange = true;
      int framesDropped = m_renderinfo.frameId - m_displayinfo[0].frameId - 1;
      if (framesDropped > 0)
-        CLog::Log(LOGWARNING, "CRenderManager::UpdateDisplayInfo detected frames dropped by RenderManager: %i", framesDropped);
+        CLog::Log(LOGERROR, "CRenderManager::UpdateDisplayInfo detected frames dropped by RenderManager: %i", framesDropped);
   }
-  else
-    return;
+  //else
+  //  return;
+  double clocktickafterpostflipclock; 
+  double signal_to_view_delay;
+  if (bFrameChange)
+  {
+     // get the vblank clock tick time following m_postflipclock value
+     clocktickafterpostflipclock = CDVDClock::GetNextAbsoluteClockTick(m_postflipclock * DVD_TIME_BASE) / DVD_TIME_BASE;
+     signal_to_view_delay = GetDisplaySignalToViewDelay(); 
+  }
 
-  // get the vblank clock tick time following m_postflipclock value
-  double clocktickafterpostflipclock = CDVDClock::GetNextAbsoluteClockTick(m_postflipclock * DVD_TIME_BASE) / DVD_TIME_BASE;
-  double signal_to_view_delay = GetDisplaySignalToViewDelay(); 
   double displayrefreshdur;
   int fps = g_VideoReferenceClock.GetRefreshRate(&displayrefreshdur); //fps == 0 or less assume no vblank based reference clock
 
   CExclusiveLock lock(m_sharedDisplayInfoSection); //now we can update the info variables.
       
-  m_flipasync = true; //TODO: get application to tell render manager if we are async or not
+
   if (bFrameChange)
   {
+     m_flipasync = true; //TODO: get application to tell render manager if we are async or not
      for (int i = NUM_DISPLAYINFOBUF - 1; i > 0; i--)
      {
          m_displayinfo[i].frameclock = m_displayinfo[i-1].frameclock;
@@ -1017,7 +1023,6 @@ void CXBMCRenderManager::UpdateDisplayInfo()
      }
   } //end bFrameChange
 
-//TODO: change framedur to pts ?
   // if we didn't change speed or duration, and at normal speed and using smooth video then 
   // estimate if we got long/short display frames for codec info
   int frameplayspeed1 = m_displayinfo[1].frameplayspeed;
@@ -1029,8 +1034,8 @@ void CXBMCRenderManager::UpdateDisplayInfo()
   //double displayframedur1 = m_displayinfo[1].framedur;
   //double displayframedur2 = m_displayinfo[2].framedur;
   //double displayframedur3 = m_displayinfo[3].framedur;
-  double displayframedur1 = displayframepts1 - displayframepts2;
-  double displayframedur2 = displayframepts2 - displayframepts3;
+  double displayframedur1 = (displayframepts1 - displayframepts2) / DVD_TIME_BASE;
+  double displayframedur2 = (displayframepts2 - displayframepts3) / DVD_TIME_BASE;
   double displayframeclock1 = m_displayinfo[1].frameclock;
   double displayframeclock2 = m_displayinfo[2].frameclock;
   double displayframeclock3 = m_displayinfo[3].frameclock;
