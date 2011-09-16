@@ -567,10 +567,15 @@ CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideoOutput::Process pts: %f playerSpeed: %i
          timeoutStartClock = prevOutputClock;
       bTimeoutTryPic = false;
 
+      if (!(ToMessageQIsEmpty()))
+         continue;
+
       // determine standard wait
       int wait = 100;
       if (bExpectMsgDelay)
          wait = msgDelayInterval * 1000 / DVD_TIME_BASE + 10;
+
+      //TODO: implement a keepalive msg from video player to output every 500ms - so that if we don't get one after 10 seconds close down?
 
       // for overlay only state we want to wait only say 5ms to loop back around to see if overlay output is due 
       // (improve later if we need smoother overlays)
