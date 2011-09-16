@@ -161,8 +161,6 @@ typedef std::vector<CDVDCodecOption> CDVDCodecOptions;
 #define VC_DECODERFRAMEDROP   0x00000100  // identify if a drop was of a frame in decoder
 #define VC_PRESENTDROP   0x00000200  // identify if a drop was after decode (before presentation)
 #define VC_DECODED  0x00000400  // identify if a picture decoded (not necessarily giving the picture yet)
-#define VC_FULL  0x00000800  // decoder is full
-#define VC_AGAIN  0x00001000  // decoder did not accept this data but suggests re-trying
 
 class CDVDVideoCodec
 {

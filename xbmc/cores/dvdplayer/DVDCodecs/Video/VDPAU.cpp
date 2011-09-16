@@ -1699,9 +1699,6 @@ int CVDPAU::Check(AVCodecContext* avctx)
 {
   if(CheckRecover(false))
     return VC_FLUSHED;
-  // if we are configured and outputting then check queue is full
-  if (vdpauConfigured && m_vdpauOutputMethod != OUTPUT_NONE && QueueIsFull())
-    return VC_FULL;
   else
     return 0;
 }
@@ -1815,7 +1812,7 @@ int CVDPAU::Decode(AVCodecContext *avctx, AVFrame *pFrame, bool bSoftDrain, bool
       CSingleLock lock(m_outPicSec);
       if (m_freeOutPic.empty())
       {
-        return VC_FULL | VC_ERROR;
+        return VC_ERROR;
       }
       OutputPicture *outPic = m_freeOutPic.front();
       m_freeOutPic.pop_front();

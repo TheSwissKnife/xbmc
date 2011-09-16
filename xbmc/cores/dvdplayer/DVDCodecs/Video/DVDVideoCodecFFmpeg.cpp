@@ -572,21 +572,8 @@ int CDVDVideoCodecFFmpeg::Decode(BYTE* pData, int iSize, double dts, double pts)
     if(pData)
     {
       result = m_pHardware->Check(m_pCodecContext);
-      if (result & VC_FULL)
-      {
-         //try to get some pic out of hardware to make some space
-         result &= ~VC_FULL;
-         // to drain or not to drain..? me thinks better not to so that we allow caller to not block here
-         result |= m_pHardware->Decode(m_pCodecContext, NULL, bSoftDrain, bHardDrain);
-         result |= VC_AGAIN; //tell caller to try again later
-      }
       if (result & VC_FLUSHED)
          Reset();
-      
-      if (result)
-      {
-        return result | VC_NOTDECODERDROPPED;
-      }
     }
     else
     {

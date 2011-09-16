@@ -823,7 +823,7 @@ CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo hurry up m_fLastDecodedPictureClock: %
              }
           }
           SetProcessNextFrame(false); //reset
-        }
+        } // VC_PICTURE
 
         FromOutputMessage fromMsg;
         int iMsgWait = 0; //default is not wait for any reply message
@@ -932,13 +932,6 @@ CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo hurry up m_fLastDecodedPictureClock: %
           break;
         }
 
-        // if last packet was requested to be tried again do just that and loop back around to process its return state
-        if (bPacket && (iDecoderState & VC_AGAIN))
-        {
-          iDecoderState = m_pVideoCodec->Decode(pPacket->pData, pPacket->iSize, pPacket->dts, pPacket->pts);
-          continue;
-        }
-
         if ( (bStreamEOF && (CDVDClock::GetAbsoluteClock(true) - m_fLastDecodedPictureClock < DVD_MSEC_TO_TIME(500))) ||
              (!bStreamEOF && !(iDecoderState & VC_BUFFER)) )
         {
@@ -947,15 +940,15 @@ CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo hurry up m_fLastDecodedPictureClock: %
           if (abs(speed) > DVD_PLAYSPEED_NORMAL)
              iDecoderHint |= VC_HINT_NOPOSTPROC;
           if (bStreamEOF)
-{
-CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo VC_HINT_HARDDRAIN");
+          {
+             CLog::Log(LOGNOTICE, "ASB: CDVDPlayerVideo VC_HINT_HARDDRAIN");
              iDecoderHint |= VC_HINT_HARDDRAIN;
              // send an expect delay message to output thread
              ToOutputMessage toMsg;
              toMsg.iCmd = VOCMD_EXPECTDELAY;
              toMsg.fInterval = DVD_MSEC_TO_TIME(200);
              m_pVideoOutput->SendMessage(toMsg);
-}
+          }
           m_pVideoCodec->SetDropState(bRequestDrop);
           m_pVideoCodec->SetDecoderHint(iDecoderHint);
           iDecoderState = m_pVideoCodec->Decode(NULL, 0, DVD_NOPTS_VALUE, DVD_NOPTS_VALUE);
@@ -993,11 +986,15 @@ CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo VC_HINT_HARDDRAIN");
 	   CLog::Log(LOGNOTICE, "CDVDPlayerVideo - Finished stream");
            bStreamEOF = false;
         }
+
         // if we are here we are not at EOF and decoder has requested more data, or we have timed out waiting after EOF
         // so we break to try to get more data from the videoQueue
-        break;
-      } //while (!m_bStop)
+        if (iDecoderState & VC_BUFFER)
+          break;
 
+        // do we have considered all cases?
+        CLog::Log(LOGWARNING, "%s not considered case", __FUNCTION__);
+      } //while (!m_bStop)
     }
 
     // all data is used by the decoder, we can safely free it now
