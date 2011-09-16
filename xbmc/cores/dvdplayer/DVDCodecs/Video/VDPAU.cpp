@@ -1708,6 +1708,8 @@ bool CVDPAU::QueueIsFull(bool wait /* = false */)
   if (m_vdpauOutputMethod == OUTPUT_NONE)
     return false;
 
+  m_queueSignal.Reset();
+
   if (m_vdpauOutputMethod == OUTPUT_GL_INTEROP_YUV)
   {
     CSingleLock locku(m_outPicSec);
