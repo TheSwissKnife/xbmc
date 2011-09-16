@@ -318,7 +318,7 @@ void CDVDPlayerVideoOutput::Process()
 {
   bool bTimeoutTryPic = false;
   int playerSpeed = DVD_PLAYSPEED_NORMAL;
-  int prevOutputSpeed = DVD_PLAYSPEED_NORMAL;
+  int prevOutputSpeed = DVD_PLAYSPEED_PAUSE; //assume paused before we start
   bool bExpectMsgDelay = false;
   double videoDelay = m_pVideoPlayer->GetDelay();
   // make overlay delay be the video delay combined with the subtitle delay (so that the subtitle delay is relative to video)
@@ -433,12 +433,13 @@ void CDVDPlayerVideoOutput::Process()
           // only real use at present is to sync clock to a better approximation than what dvd player might have done
           // - but during overlay only mode it could also be used to perhaps handle overlay timing better (TODO)
 CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideoOutput::Process Got msgCmd == VOCMD_SPEEDCHANGE playerSpeed: %i", playerSpeed);
-          if (playerSpeed == DVD_PLAYSPEED_PAUSE && prevOutputPts != DVD_NOPTS_VALUE)
+          if (playerSpeed == DVD_PLAYSPEED_PAUSE)
           {
              // pretend we output at this speed as likely no pic msg will be given to us at this speed
              // - this allows us to detect un-pause later
              prevOutputSpeed = DVD_PLAYSPEED_PAUSE;
-             m_pClock->Discontinuity(prevOutputPts + videoDelay);  //get the clock re-positioned approximately
+             if (prevOutputPts != DVD_NOPTS_VALUE)
+                m_pClock->Discontinuity(prevOutputPts + videoDelay);  //get the clock re-positioned approximately
           }
           continue;
       }
@@ -513,7 +514,7 @@ CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideoOutput::Process Got msgCmd == VOCMD_SPE
     {
       // we want to tell OutputPicture our previous output speed so that it can use the previous speed for
       // calculation of presentation time
-      prevOutputSpeed = playerSpeed;  //update our previous playspeed only when actually outputting
+      //prevOutputSpeed = playerSpeed;  //update our previous playspeed only when actually outputting
       int outPicResult = 0;
       SetPts(pts); //allow other threads to know our pts
 
@@ -535,6 +536,7 @@ CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideoOutput::Process pts: %f playerSpeed: %i
             outPicResult |= EOS_STARTED; //tell player we have started outputting to inform it that it can now fully start
          }
       }
+      prevOutputSpeed = playerSpeed;  //update our previous playspeed only when actually outputting
       //provided we did not get a bad status from output of pic and outp of overlay then signal new frame to application
       if (!(outPicResult & (EOS_CONFIGURE | EOS_DROPPED | EOS_ABORT)) || (outOverlayResult != -1) )
       {
