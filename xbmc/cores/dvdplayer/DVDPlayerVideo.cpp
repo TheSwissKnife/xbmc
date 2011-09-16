@@ -1910,15 +1910,21 @@ CLog::Log(LOGDEBUG,"ASB: CDVDPlayerVideo::OutputPicture pts: %f", pts);
     fClockSleep = 0;
   }
   else if (playSpeed != DVD_PLAYSPEED_PAUSE)
+  {
     fClockSleep = fClockSleep * DVD_PLAYSPEED_NORMAL / playSpeed;
+    if (prevPlaySpeed == DVD_PLAYSPEED_PAUSE)
+    {
+      // consider as pause speed for renderer info (because previous one just before pause would have probably not told render manager of pause to come)
+      playSpeed = DVD_PLAYSPEED_PAUSE;
+    }
+  } 
   else if (prevPlaySpeed != DVD_PLAYSPEED_PAUSE)
   {
+    // set sleep as if playng at previous rate (for first pic after pause if that is delivered that way)
     fClockSleep = fClockSleep * DVD_PLAYSPEED_NORMAL / prevPlaySpeed;
-    // consider as pause speed (because previous one just before pause would have probably not told render manager of pause to come)
-    playSpeed = DVD_PLAYSPEED_PAUSE;
   }
   else
-    fClockSleep = 0; 
+    fClockSleep = 0; //prev and current speed is pause (eg stepframe)
 
   // protect against erroneously dropping to a very low framerate
   fClockSleep = min(fClockSleep, DVD_MSEC_TO_TIME(1000));
