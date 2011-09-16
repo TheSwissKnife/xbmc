@@ -214,6 +214,22 @@ protected:
 
   CFrameBufferObject m_fbo;
 
+  // Render Buffer State Description:
+  //
+  // Output:      is the buffer about to or having its texture prepared for for render (ie from output thread).
+  //              Cannot go past the "Displayed" buffer (otherwise we will probably overwrite buffers not yet
+  //              displayed or even rendered).
+  // Current:     is the current buffer being or having been submitted for render to back buffer.
+  //              Cannot go past "Output" buffer (else it would be rendering old output).
+  // FlipRequest: is the render buffer that has last been submitted for render AND importantly has had 
+  //              swap-buffer flip subsequently invoked (thus flip to front buffer is requested for vblank
+  //              subsequent to render completion).
+  // Displayed:   is the buffer that is now considered to be safely copied from back buffer to front buffer 
+  //              (we assume that after two swap-buffer flips for the same "Current" render buffer that that 
+  //              buffer will be safe, but otherwise we consider that only the previous-to-"Current" is guaranteed).
+  // Last:        is the last buffer successfully submitted for render to back buffer (used to rollback to in 
+  //              unexpected case where render fails.
+
   int m_iCurrentRenderBuffer;
   int m_NumRenderBuffers;
   int m_iLastRenderBuffer;

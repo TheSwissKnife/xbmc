@@ -765,6 +765,7 @@ void CLinuxRendererGL::DrawBlackBars()
 
 void CLinuxRendererGL::FlipPage(int source)
 {
+  // See "Render Buffer State Description" in header for information.
   int curr = m_iCurrentRenderBuffer;
   if( source >= 0 && source < m_NumRenderBuffers )
     m_iCurrentRenderBuffer = source;
@@ -784,22 +785,16 @@ void CLinuxRendererGL::NotifyDisplayFlip()
   if (!m_bValidated)
     return;
 
-  // flip 'displayed' render buffer index to signify that this buffer can now be considered free to re-use
+  // Flip 'displayed' render buffer index to signify that this buffer can now be considered free to re-use
   // we can assume that buffer prior to the current render buffer is safe to re-use.
   // If we get notified a second time and render buffer has not moved then we can also assume the render buffer itself
   // is now to safe to re-use.
-  //int last = m_iDisplayedRenderBuffer;
+  // See "Render Buffer State Description" in header for information.
   if (m_iFlipRequestRenderBuffer == m_iCurrentRenderBuffer)
       m_iDisplayedRenderBuffer == m_iCurrentRenderBuffer;
   else
       m_iDisplayedRenderBuffer = (m_iCurrentRenderBuffer + m_NumRenderBuffers - 1) % m_NumRenderBuffers;
   m_iFlipRequestRenderBuffer = m_iCurrentRenderBuffer;
-
-  //if (m_iDisplayedRenderBuffer == last)
-  //if (m_iDisplayedRenderBuffer == m_iLastDisplayedRenderBuffer)
-  //   m_iDisplayedRenderBuffer = m_iCurrentRenderBuffer;
-  //m_iLastDisplayedRenderBuffer = last;
-CLog::Log(LOGDEBUG, "ASB: CLinuxRendererGL::NotifyDisplayFlip m_iDisplayedRenderBuffer: %i m_iCurrentRenderBuffer: %i m_iFlipRequestRenderBuffer: %i", m_iDisplayedRenderBuffer, m_iCurrentRenderBuffer, m_iFlipRequestRenderBuffer);
 }
 
 bool CLinuxRendererGL::HasFreeBuffer()
@@ -807,7 +802,9 @@ bool CLinuxRendererGL::HasFreeBuffer()
   if (!m_bValidated)
     return false;
   // we have a free buffer to prepare for render when we have not yet caught up with 
-  // the 'displayed' render buffer index as we don't allow incrementing (flipping) past this value 
+  // the 'displayed' render buffer index (unless 'displayed' and 'current' have both caught up with 'output'
+  // in which case all 3 values will be the same and thus all buffers are free
+  // See "Render Buffer State Description" in header for information.
   if (m_iOutputRenderBuffer == m_iDisplayedRenderBuffer && m_iDisplayedRenderBuffer != m_iCurrentRenderBuffer)
     return false;
   else
@@ -827,6 +824,7 @@ int CLinuxRendererGL::FlipFreeBuffer()
   if (!m_bValidated)
     return -1;
 
+  // See "Render Buffer State Description" in header for information.
   if (HasFreeBuffer())
   {
      m_iOutputRenderBuffer = (m_iOutputRenderBuffer + 1) % m_NumRenderBuffers;
@@ -841,6 +839,7 @@ int CLinuxRendererGL::GetNextRenderBufferIndex()
   if (!m_bValidated)
     return -1;
   // if output buffer index has not moved forward render buffer can't
+  // See "Render Buffer State Description" in header for information.
   if (m_iOutputRenderBuffer == m_iCurrentRenderBuffer)
     return -1;
   return (m_iCurrentRenderBuffer + 1) % m_NumRenderBuffers;
