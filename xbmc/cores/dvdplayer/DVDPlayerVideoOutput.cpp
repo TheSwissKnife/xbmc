@@ -49,7 +49,7 @@ CDVDPlayerVideoOutput::CDVDPlayerVideoOutput(CDVDPlayerVideo *videoplayer, CDVDC
 
 CDVDPlayerVideoOutput::~CDVDPlayerVideoOutput()
 {
-  StopThread();
+  Dispose();
 }
 
 void CDVDPlayerVideoOutput::Start()
@@ -75,12 +75,15 @@ void CDVDPlayerVideoOutput::Reset(bool resetConfigure /* = false */)
     StopThread();
   }
 
-  while (!m_toOutputMessage.empty())
-     m_toOutputMessage.pop();
-  while (!m_fromOutputMessage.empty())
-     m_fromOutputMessage.pop();
+  {  CSingleLock lock(m_criticalSection);
+    while (!m_toOutputMessage.empty())
+       m_toOutputMessage.pop();
+    while (!m_fromOutputMessage.empty())
+       m_fromOutputMessage.pop();
 
-  memset(&m_picture, 0, sizeof(DVDVideoPicture));
+    memset(&m_picture, 0, sizeof(DVDVideoPicture));
+    m_state = VO_STATE_WAITINGPLAYERSTART;
+  }
 
   if (bRecover)
     Start();
@@ -332,7 +335,7 @@ void CDVDPlayerVideoOutput::Process()
   double prevOutputClock = clock; //init as if we just output
   double timeoutStartClock = clock; 
   SetRendererConfiguring(false);
-  m_state = VO_STATE_RECOVER;  //start in recover state
+  m_state = VO_STATE_WAITINGPLAYERSTART;
 
   while (!m_bStop)
   {
@@ -342,20 +345,7 @@ void CDVDPlayerVideoOutput::Process()
     bool bOutputOverlay = false;
     bool bResync = false; //clock resync flag to tell render manager to discard any previous clock corrections
 
-    if (m_state == VO_STATE_RECOVER)
-    {
-      if (RefreshGlxContext())
-      {
-        SetRecovering(false);
-        m_state = VO_STATE_WAITINGPLAYERSTART; //move from recover to waiting player start state
-      }
-      else
-      {
-        Sleep(5);
-        continue; //check recover again until we can move to init state
-      }
-    }
-    else if (m_state == VO_STATE_RENDERERCONFIGURING)
+    if (m_state == VO_STATE_RENDERERCONFIGURING)
     {
       // we just wait loop waiting for event so that we can check 
       m_toMsgSignal.WaitMSec(200);
@@ -383,7 +373,7 @@ void CDVDPlayerVideoOutput::Process()
     if (!bOutPic && (bHaveMsg || bTimeoutTryPic))
     {
       if (bHaveMsg)
-         bExpectMsgDelay = false; //reset
+        bExpectMsgDelay = false; //reset
 
       VOCMD_TYPE msgCmd = VOCMD_NOCMD; 
       double interval;
@@ -400,11 +390,11 @@ void CDVDPlayerVideoOutput::Process()
 
       if (m_state == VO_STATE_WAITINGPLAYERSTART && 
               toMsg.bPlayerStarted && playerSpeed != DVD_PLAYSPEED_PAUSE &&
-              (msgCmd == VOCMD_NEWPIC || msgCmd == VOCMD_PROCESSOVERLAYONLY)) 
-         m_state = VO_STATE_SYNCCLOCKFLUSH; //seek, start, flush (longer delay required): move to (temporary state) sync-clock-flush
+              (msgCmd == VOCMD_NEWPIC || msgCmd == VOCMD_PROCESSOVERLAYONLY))
+        m_state = VO_STATE_SYNCCLOCKFLUSH; //seek, start, flush (longer delay required): move to (temporary state) sync-clock-flush
 
       else if (m_state != VO_STATE_WAITINGPLAYERSTART && !(toMsg.bPlayerStarted))
-         m_state = VO_STATE_WAITINGPLAYERSTART; //move back to waiting player start state
+        m_state = VO_STATE_WAITINGPLAYERSTART; //move back to waiting player start state
 
       else if (m_state != VO_STATE_WAITINGPLAYERSTART && 
                prevOutputSpeed == DVD_PLAYSPEED_PAUSE && playerSpeed != DVD_PLAYSPEED_PAUSE && 
@@ -511,6 +501,12 @@ CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideoOutput::Process Got msgCmd == VOCMD_SPE
 
     if (bOutPic || bOutputOverlay) //we have something to output
     {
+      // configure gl context
+      if (Recovering())
+      {
+        if (RefreshGlxContext())
+          SetRecovering(false);
+      }
       // we want to tell OutputPicture our previous output speed so that it can use the previous speed for
       // calculation of presentation time
       prevOutputSpeed = playerSpeed;  //update our previous playspeed only when actually outputting
