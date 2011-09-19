@@ -296,7 +296,7 @@ bool CLinuxRendererGL::Configure(unsigned int width, unsigned int height, unsign
       (prev_sourceHeight == m_sourceHeight) && (prev_sourceWidth == m_sourceWidth) &&
       ((prev_iFlags | CONF_FLAGS_FULLSCREEN) == (m_iFlags | CONF_FLAGS_FULLSCREEN)))
   {
-     CLog::Log(LOGDEBUG, "CLinuxRendererGL::Configure fps-only change with no resolution change, no need to unconfigure");
+     CLog::Log(LOGDEBUG, "CLinuxRendererGL::Configure change requiring no resolution change, no need to unconfigure");
      return true;
   }
 
