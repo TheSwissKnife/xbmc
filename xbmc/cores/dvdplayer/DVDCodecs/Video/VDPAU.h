@@ -141,6 +141,7 @@ public:
   void SetSharpness();
   void SetDeintSkipChroma();
   void SetDeinterlacing();
+  void DisableHQScaling();
   void PostProcOff();
   EINTERLACEMETHOD GetDeinterlacingMethod(bool log = false);
   void SetHWUpscaling();
@@ -151,11 +152,12 @@ public:
   bool       clearedDown;
   vdpau_render_state *past[2], *current, *future[2];
   int        tmpDeint;
+  int        tmpUpScale;
   bool       tmpPostProc;
   float      tmpNoiseReduction, tmpSharpness;
   float      tmpBrightness, tmpContrast;
   int        OutWidth, OutHeight;
-  bool       upScale;
+  int        upScale;
   bool m_preBindPixmapsDone;
 
   static inline void ClearUsedForRender(vdpau_render_state **st)

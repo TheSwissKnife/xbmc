@@ -84,7 +84,7 @@ void CAdvancedSettings::Initialize()
   m_videoIgnoreSecondsAtStart = 3*60;
   m_videoIgnorePercentAtEnd   = 8.0f;
   m_videoPlayCountMinimumPercent = 90.0f;
-  m_videoVDPAUScaling = false;
+  m_videoVDPAUScaling = -1;
   m_videoNonLinStretchRatio = 0.5f;
   m_videoAllowLanczos3 = false;
   m_videoAutoScaleMaxFps = 30.0f;
@@ -457,7 +457,7 @@ void CAdvancedSettings::ParseSettingsFile(const CStdString &file)
     XMLUtils::GetString(pElement,"ppffmpegdeinterlacing",m_videoPPFFmpegDeint);
     XMLUtils::GetInt(pElement,"ffmpeginterlacedflaglingerframes",m_videoFFmpegInterlacedFlagLingerFrames);
     XMLUtils::GetString(pElement,"ppffmpegpostprocessing",m_videoPPFFmpegPostProc);
-    XMLUtils::GetBoolean(pElement,"vdpauscaling",m_videoVDPAUScaling);
+    XMLUtils::GetInt(pElement,"vdpauscaling",m_videoVDPAUScaling);
     XMLUtils::GetFloat(pElement, "nonlinearstretchratio", m_videoNonLinStretchRatio, 0.01f, 1.0f);
     XMLUtils::GetBoolean(pElement,"allowlanczos3",m_videoAllowLanczos3);
     XMLUtils::GetFloat(pElement,"autoscalemaxfps",m_videoAutoScaleMaxFps, 0.0f, 1000.0f);
