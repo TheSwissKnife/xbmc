@@ -1609,8 +1609,11 @@ bool CDVDPlayer::CheckStartCaching(CCurrentStream& current)
          m_dvdPlayerVideo.m_messageQueue.GetLevel() > 50)
       return false;
 
+//ASB get rid of buffering messages after seek (TODO: look into whether this could be done in a better way to get cache quickly to a reasonable buffer level later eg 20%)
+// for now use CACHESTATE_PVR until decision that this method should be generalised for FULL
     if(current.inited)
-      SetCaching(CACHESTATE_FULL);
+      //SetCaching(CACHESTATE_FULL);
+      SetCaching(CACHESTATE_PVR);
     else
       SetCaching(CACHESTATE_INIT);
     return true;
