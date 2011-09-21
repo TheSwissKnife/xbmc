@@ -136,6 +136,7 @@ public:
 
   bool CheckRecover(bool force = false);
   void CheckFeatures();
+  void SetPostProcFeatures(bool postProcEnabled = true);
   void SetColor();
   void SetNoiseReduction();
   void SetSharpness();

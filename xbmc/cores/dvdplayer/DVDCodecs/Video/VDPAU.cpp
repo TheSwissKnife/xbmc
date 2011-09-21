@@ -560,6 +560,23 @@ bool CVDPAU::IsVDPAUFormat(PixelFormat format)
   else return false;
 }
 
+void CVDPAU::SetPostProcFeatures(bool postProcEnabled /* = true */)
+{
+  if (tmpPostProc != postProcEnabled)
+  {
+    if (postProcEnabled)
+    {
+      SetNoiseReduction();
+      SetSharpness();
+      SetDeinterlacing();
+       SetHWUpscaling();
+    }
+    else
+      PostProcOff();
+    tmpPostProc = postProcEnabled;
+  }
+}
+
 void CVDPAU::CheckFeatures()
 {
   if (m_vdpauOutputMethod != OUTPUT_GL_INTEROP_YUV)
@@ -623,19 +640,6 @@ void CVDPAU::CheckFeatures()
     {
       tmpDeint = g_settings.m_currentVideoSettings.m_InterlaceMethod;
       SetDeinterlacing();
-    }
-    if (tmpPostProc != m_bPostProc)
-    {
-      if (m_bPostProc)
-      {
-        SetNoiseReduction();
-        SetSharpness();
-        SetDeinterlacing();
-        SetHWUpscaling();
-      }
-      else
-        PostProcOff();
-      tmpPostProc = m_bPostProc;
     }
   }
 }
@@ -1333,7 +1337,6 @@ bool CVDPAU::ConfigVDPAU(AVCodecContext* avctx, int ref_frames)
   m_vdpauOutputMethod = OUTPUT_NONE;
 
   vdpauConfigured = true;
-  m_bPostProc = true;
   m_binterlacedFrame = false;
   return true;
 }
@@ -1904,6 +1907,18 @@ int CVDPAU::Decode(AVCodecContext *avctx, AVFrame *pFrame, bool bSoftDrain, bool
       ((CDVDVideoCodecFFmpeg*)avctx->opaque)->GetPictureCommon(&outPic->DVDPic);
       outPic->render = render;
       outPic->reported = false;
+
+      outPic->DVDPic.format = DVDVideoPicture::FMT_VDPAU_420;
+      outPic->DVDPic.iWidth = OutWidth;
+      outPic->DVDPic.iHeight = OutHeight;
+      outPic->DVDPic.vdpau = this;
+      // tell renderer not to do de-interlacing when using OUTPUT_GL_INTEROP_YUV
+      // and no post processing is desired
+      if (outPic->DVDPic.iFlags & DVP_FLAG_NOPOSTPROC)
+         outPic->DVDPic.iFlags &= ~(DVP_FLAG_TOP_FIELD_FIRST |
+                           DVP_FLAG_REPEAT_TOP_FIELD |
+                           DVP_FLAG_INTERLACED);
+
       m_usedOutPic.push_back(outPic);
       lock.Leave();
     }
@@ -1914,13 +1929,6 @@ int CVDPAU::Decode(AVCodecContext *avctx, AVFrame *pFrame, bool bSoftDrain, bool
        memset(&msg.DVDPic, 0, sizeof(DVDVideoPicture));
        ((CDVDVideoCodecFFmpeg*)avctx->opaque)->GetPictureCommon(&msg.DVDPic);
        msg.outRectVid = outRectVid;
-
-       //TODO: this post proc logic does not seem quite correct with CheckFeatures doing too much above...?
-       //check if we should switch off post processing...shouldn't it be the flag in msg for mixer thread to set post proc on/off directly itself?
-       if (msg.DVDPic.iFlags & DVP_FLAG_NOPOSTPROC)
-         m_bPostProc = false;
-       else
-         m_bPostProc = true;
 
        { CSingleLock lock(m_mixerSec);
          m_mixerMessages.push(msg);
@@ -2153,11 +2161,12 @@ bool CVDPAU::GetPicture(AVCodecContext* avctx, AVFrame* frame, DVDVideoPicture* 
   { CSingleLock lock(m_outPicSec);
 
     if (DiscardPresentPicture())
-      CLog::Log(LOGDEBUG,"CVDPAU::GetPicture: old presentPicture was still valid - now discarded");
+      CLog::Log(LOGWARNING,"CVDPAU::GetPicture: old presentPicture was still valid - now discarded");
     if (m_usedOutPic.size() > 0)
     {
       m_presentPicture = m_usedOutPic.front();
       m_usedOutPic.pop_front();
+      *picture = m_presentPicture->DVDPic;
     }
     else
     {
@@ -2167,35 +2176,37 @@ bool CVDPAU::GetPicture(AVCodecContext* avctx, AVFrame* frame, DVDVideoPicture* 
   }
 //CLog::Log(LOGDEBUG,"ASB: CVDPAU::GetPicture: m_presentPicture: %u", (unsigned int)m_presentPicture);
 
-  *picture = m_presentPicture->DVDPic;
+//TODO: put the reset of this under lock control as different thread can change m_presentPicture (during reset) not to mention OutWidth etc - perhaps most of this can be moved out anyway?
+//  *picture = m_presentPicture->DVDPic;
 
-//TODO: move m_bPostProc checking out of here - should be done per pic at decode time
-  if (m_presentPicture->render)
-  {
-    picture->format = DVDVideoPicture::FMT_VDPAU_420;
-    // tell renderer not to do de-interlacing when using OUTPUT_GL_INTEROP_YUV
-    // and no post processing is desired
-    if (!m_bPostProc)
-      picture->iFlags &= ~(DVP_FLAG_TOP_FIELD_FIRST |
-                           DVP_FLAG_REPEAT_TOP_FIELD |
-                           DVP_FLAG_INTERLACED);
-  }
-  else
-  {
-    picture->format = DVDVideoPicture::FMT_VDPAU;
-    // when using OUTPUT_GL_INTEROP_RGB or OUTPUT_PIXMAP no de-interlacing
-    // should be done by renderer. VDPAU doesn't expose fields using those methods
-    picture->iFlags &= ~(DVP_FLAG_TOP_FIELD_FIRST |
-                         DVP_FLAG_REPEAT_TOP_FIELD |
-                         DVP_FLAG_INTERLACED);
-  }
-
-  picture->iWidth = OutWidth;
-  picture->iHeight = OutHeight;
-  picture->vdpau = this;
-
-  m_presentPicture->DVDPic = *picture;
-
+//TODO: move m_bPostProc iFlags adjust out of here - should be done per pic at decode time in Decode() YUV section?
+// as should the format set
+//  if (m_presentPicture->render)
+//  {
+//    picture->format = DVDVideoPicture::FMT_VDPAU_420;
+//    // tell renderer not to do de-interlacing when using OUTPUT_GL_INTEROP_YUV
+//    // and no post processing is desired
+//    if (!m_bPostProc)
+//      picture->iFlags &= ~(DVP_FLAG_TOP_FIELD_FIRST |
+//                           DVP_FLAG_REPEAT_TOP_FIELD |
+//                           DVP_FLAG_INTERLACED);
+//  }
+//  else
+//  {
+//    picture->format = DVDVideoPicture::FMT_VDPAU;
+//    // when using OUTPUT_GL_INTEROP_RGB or OUTPUT_PIXMAP no de-interlacing
+//    // should be done by renderer. VDPAU doesn't expose fields using those methods
+//    picture->iFlags &= ~(DVP_FLAG_TOP_FIELD_FIRST |
+//                         DVP_FLAG_REPEAT_TOP_FIELD |
+//                         DVP_FLAG_INTERLACED);
+//  }
+//
+//  picture->iWidth = OutWidth;
+//  picture->iHeight = OutHeight;
+//  picture->vdpau = this;
+//
+//  m_presentPicture->DVDPic = *picture;
+//
   return true;
 }
 
@@ -2242,7 +2253,7 @@ void CVDPAU::Reset()
         pic->outputSurface = VDP_INVALID_HANDLE;
         break;
       }
-      if (++iter < 50)
+      if (++iter < 100)
         Sleep(1);
       else
       {
@@ -2292,7 +2303,10 @@ void CVDPAU::Present(int flipBufferIdx)
   VdpStatus vdp_st;
 
   if (!m_presentPicture)
+  {
     CLog::Log(LOGWARNING, "CVDPAU::Present: present picture is NULL");
+    return;
+  }
 
   CSingleLock lock(m_flipSec);
   if (m_flipBuffer[flipBufferIdx])
@@ -2310,8 +2324,6 @@ void CVDPAU::Present(int flipBufferIdx)
   }
 
   m_flipBuffer[flipBufferIdx] = m_presentPicture;
-  m_presentPicture = NULL;
-
   m_presentPicture = NULL;
 }
 
@@ -2582,16 +2594,30 @@ void CVDPAU::Process()
         {
           double pts = m_mixerInput[1].DVDPic.pts +
               (m_mixerInput[0].DVDPic.pts - m_mixerInput[1].DVDPic.pts)/2;
-          //TODO: what is the comment here supposed to mean?
+          //TODO: what is the comment here supposed to mean...perhaps it is trying to suggest that we should not set if it was based on a value of DVD_NO_PTS_VALUE?
           outPic->DVDPic.dts = pts; //DVD_NOPTS_VALUE;
           outPic->DVDPic.pts = pts; //DVD_NOPTS_VALUE;
         }
       }
 
+      outPic->DVDPic.format = DVDVideoPicture::FMT_VDPAU;
+      outPic->DVDPic.iWidth = OutWidth;
+      outPic->DVDPic.iHeight = OutHeight;
+      outPic->DVDPic.vdpau = this;
+      // when using mixer no de-interlacing should be done by renderer. VDPAU doesn't expose fields in this case
+      outPic->DVDPic.iFlags &= ~(DVP_FLAG_TOP_FIELD_FIRST |
+                           DVP_FLAG_REPEAT_TOP_FIELD |
+                           DVP_FLAG_INTERLACED);
+      if (outPic->DVDPic.iFlags & DVP_FLAG_NOPOSTPROC)
+          SetPostProcFeatures(false);
+      else
+          SetPostProcFeatures();
+
       // skip mixer step if requested
       if (cmd & MIXER_CMD_HURRY ||
           (outPic->DVDPic.iFlags & DVP_FLAG_DROPPED))
       {
+CLog::Log(LOGDEBUG, "ASB: VDPAU::Process mixer skip cmd: %i outPic->DVDPic.iFlags: %i", (int)cmd, (int)outPic->DVDPic.iFlags);
         outPic->DVDPic.iFlags |= DVP_FLAG_DROPPED;
         if (m_vdpauOutputMethod == OUTPUT_PIXMAP)
           outPic->outputSurface = VDP_INVALID_HANDLE;
@@ -2629,6 +2655,7 @@ void CVDPAU::Process()
           // background colour using the mixer
           // pixel perfect is preferred over overscanning or zooming
 
+//TODO: should m_mixerInput[1] be outPic for clarity?
           VdpRect clipRect = m_mixerInput[1].outRectVid;
           clipRect.y1 = clipRect.y0 + 2;
           uint32_t *data[] = {m_threeBlackLines};
