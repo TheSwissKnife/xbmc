@@ -59,7 +59,7 @@ public:
   void GetVideoRect(CRect &source, CRect &dest) { CSharedLock lock(m_sharedSection); if (m_pRenderer) m_pRenderer->GetVideoRect(source, dest); };
   float GetAspectRatio() { CSharedLock lock(m_sharedSection); if (m_pRenderer) return m_pRenderer->GetAspectRatio(); else return 1.0f; };
   void Update(bool bPauseDrawing);
-  void RenderUpdate(bool clear, DWORD flags = 0, DWORD alpha = 255);
+  void RenderUpdate(bool flip, bool clear, DWORD flags = 0, DWORD alpha = 255);
   double GetCurrentDisplayPts(int& playspeed, double& callclock);
   double GetDisplayDelay();
   double GetDisplaySignalToViewDelay();

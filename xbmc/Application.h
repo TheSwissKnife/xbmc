@@ -88,7 +88,7 @@ public:
   virtual bool Initialize();
   virtual void FrameMove(bool processEvents);
   virtual void Render();
-  virtual bool RenderNoPresent();
+  virtual bool RenderNoPresent(bool advanceFrame = true);
   virtual void Preflight();
   virtual bool Create();
   virtual bool Cleanup();

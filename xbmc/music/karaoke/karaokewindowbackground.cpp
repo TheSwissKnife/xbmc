@@ -164,7 +164,7 @@ void CKaraokeWindowBackground::Render()
     if ( g_application.IsPresentFrame() )
       g_renderManager.Present();
     else
-      g_renderManager.RenderUpdate(true, 0, 255);
+      g_renderManager.RenderUpdate(true, true, 0, 255);
 #endif
   }
 

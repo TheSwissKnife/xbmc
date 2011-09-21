@@ -1906,7 +1906,7 @@ bool CApplication::LoadUserWindows()
   return true;
 }
 
-bool CApplication::RenderNoPresent()
+bool CApplication::RenderNoPresent(bool advanceFrame /* = true */)
 {
   MEASURE_FUNCTION;
 
@@ -1927,7 +1927,7 @@ bool CApplication::RenderNoPresent()
       g_renderManager.Present();
     }
     else
-      g_renderManager.RenderUpdate(true);
+      g_renderManager.RenderUpdate(advanceFrame, true);
 
     // close window overlays
     CGUIDialog *overlay = (CGUIDialog *)g_windowManager.GetWindow(WINDOW_DIALOG_VIDEO_OVERLAY);
@@ -2014,6 +2014,7 @@ void CApplication::Render()
     ResetScreenSaver();
     return;
   }
+//CLog::Log(LOGDEBUG, "ASB: CApplication::Render IsPlayingVideo(): %i IsPaused(): %i IsPlaying(): %i g_graphicsContext.IsFullScreenVideo(): %i", (int)IsPlayingVideo(), (int)IsPaused(), (int)IsPlaying(), (int)g_graphicsContext.IsFullScreenVideo());
 
   MEASURE_FUNCTION;
 
@@ -2046,7 +2047,8 @@ void CApplication::Render()
 
       m_bPresentFrame = m_frameCount > 0;
       decrement = m_bPresentFrame;
-      hasRendered = true;
+      //Why do we set hasRendered when nothing has been?
+      //hasRendered = true;
     }
     else
     {
@@ -2071,6 +2073,7 @@ void CApplication::Render()
       }
 
       //decrement = true;
+      CSingleLock lock(m_frameMutex);
       decrement = m_frameCount > 0; //not sure this is full fix but need to prevent decrements occurring during switch full screen non paused
     }
   }
@@ -2088,10 +2091,10 @@ void CApplication::Render()
   if(!g_Windowing.BeginRender())
     return;
 
-  int64_t pre = CurrentHostCounter();
-  if (RenderNoPresent())
+  //int64_t pre = CurrentHostCounter();
+  if (RenderNoPresent(decrement))
     hasRendered = true;
-  int64_t post = CurrentHostCounter();
+  //int64_t post = CurrentHostCounter();
 
   g_Windowing.EndRender();
 

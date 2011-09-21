@@ -174,7 +174,7 @@ void CXBMCRenderManager::WaitPresentTime(double presenttime, bool reset_corr /* 
   // target wait should be earlier by 1 frametime to get to frontbuffer + targetpos as well as signal to view delay
   // and finally corrected by our wait clock tracking correction factor (m_presentcorr)
   double targetwaitclock = presenttime - ((1 + targetpos) * frametime) - signal_to_view_delay;
-CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::WaitPresentTime targetwaitclock: %f presenttime: %f", targetwaitclock, presenttime);
+//CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::WaitPresentTime targetwaitclock: %f presenttime: %f", targetwaitclock, presenttime);
   targetwaitclock += presentcorr * frametime;  //adjust by our accumulated correction
 
   // we now wait and wish our clock tick result to be targetpos out from target wait
@@ -324,20 +324,25 @@ void CXBMCRenderManager::Update(bool bPauseDrawing)
   m_presentevent.Set();
 }
 
-void CXBMCRenderManager::RenderUpdate(bool clear, DWORD flags, DWORD alpha)
+void CXBMCRenderManager::RenderUpdate(bool flip, bool clear, DWORD flags, DWORD alpha)
 {
+  //attempt to flip forward to next video frame or overlay only if flip == true
+//CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::RenderUpdate m_renderinfo.frameId: %i m_renderinfo.framepts: %f flip: %i", m_renderinfo.frameId, m_renderinfo.framepts, (bool)flip);
+  if (flip)
   { CRetakeLock<CExclusiveLock> lock(m_sharedSection);
     if (!m_pRenderer)
       return;
 
     if (m_presentstep == PRESENT_IDLE)
-      CheckNextBuffer();
+      CheckNextBuffer(); //if we have a video pic image output render buffer ready, flip to it and set state to FLIP 
+//CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::RenderUpdate POST NEXTBUFFER m_renderinfo.frameId: %i m_renderinfo.framepts: %f", m_renderinfo.frameId, m_renderinfo.framepts);
 
-    //m_overlays.FlipRender();
+// TODO: only flip overlays if the time is about right for the overlay to present: not sure if better to handle at output time, flip time , render time
+    m_overlays.FlipRender();
 
-    if(m_presentstep == PRESENT_FLIP)
+    if(m_presentstep == PRESENT_FLIP) //if we had moved to FLIP state then we must now flip the underyling renderer buffers to match
     {
-      m_overlays.FlipRender();
+      //m_overlays.FlipRender();
       m_pRenderer->FlipPage(m_presentsource);
       m_presentstep = PRESENT_FRAME;
       m_presentevent.Set();
@@ -663,26 +668,30 @@ float CXBMCRenderManager::GetMaximumFPS()
 
 void CXBMCRenderManager::Present()
 {
+//CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::Present m_renderinfo.frameId: %i m_renderinfo.framepts: %f", m_renderinfo.frameId, m_renderinfo.framepts);
   { CRetakeLock<CExclusiveLock> lock(m_sharedSection);
     if (!m_pRenderer)
       return;
 
     if (m_presentstep == PRESENT_IDLE)
       CheckNextBuffer();
+//CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::Present POST NEXTBUFFER m_renderinfo.frameId: %i m_renderinfo.framepts: %f", m_renderinfo.frameId, m_renderinfo.framepts);
 
+// TODO: only flip overlays if the time is about right for the overlay to present: not sure if better to handle at output time, flip time , render time
     if(m_presentstep == PRESENT_FLIP)
     {
       m_overlays.FlipRender();
-      m_requestOverlayFlip = false;
+      //m_requestOverlayFlip = false;
       m_pRenderer->FlipPage(m_presentsource);
       m_presentstep = PRESENT_FRAME;
       m_presentevent.Set();
     }
     // continue flipping overlays for still frames
-    else if (m_requestOverlayFlip)
+    //else if (m_requestOverlayFlip)
+    else
     {
       m_overlays.FlipRender();
-      m_requestOverlayFlip = false;
+      //m_requestOverlayFlip = false;
     }
   }
 
@@ -1076,7 +1085,7 @@ void CXBMCRenderManager::NotifyDisplayFlip()
   UpdatePostFlipClock();
   UpdateDisplayInfo();
 
-CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::NotifyDisplayFlip called with m_renderinfo.framepts: %f", m_renderinfo.framepts);
+//CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::NotifyDisplayFlip m_renderinfo.frameId: %i m_renderinfo.framepts: %f", m_renderinfo.frameId, m_renderinfo.framepts);
 
   CRetakeLock<CExclusiveLock> lock(m_sharedSection);
 
@@ -1147,6 +1156,7 @@ double CXBMCRenderManager::GetCurrentDisplayPts(int& playspeed, double& callcloc
      sampleclock = m_refdisplayinfo.frameclock;
   }
 
+//CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::GetCurrentDisplayPts clock: %f m_displayinfo[0].frameclock: %f playspeed: %i m_displayinfo[0].refreshdur: %f", clock, m_displayinfo[0].frameclock, playspeed, m_displayinfo[0].refreshdur);
   //if ( (playspeed == DVD_PLAYSPEED_PAUSE && clock >= m_displayinfo[0].frameclock) ||
   if ( (playspeed == DVD_PLAYSPEED_PAUSE) ||
        (clock >= m_displayinfo[0].frameclock + m_displayinfo[0].refreshdur) ) 
@@ -1179,16 +1189,16 @@ void CXBMCRenderManager::CheckNextBuffer()
   if(presenttime - clocktime > MAXPRESENTDELAY)
     presenttime = clocktime + MAXPRESENTDELAY;
 
-  m_renderinfo.framepts = *image.pPts; //from image
-  m_renderinfo.frameId = *image.pId; //from image
-  m_renderinfo.frameplayspeed = *image.pPlaySpeed; //from image
-  m_renderinfo.framedur = *image.pFrameDur/DVD_TIME_BASE; //from image
-  m_vclockresync = *image.pVClockResync;
-
-//TODO: should we not do the below flip request step in even if late in non-fullscreen mode?
+//TODO: we should not request flip too early and not flip too late...improve to give some of the display dislay logic and only present if within some acceptable range (eg should be within some duration defined by Application.cpp related to how often it is currently rendering)
   if(g_graphicsContext.IsFullScreenVideo()
       || presenttime <= clocktime)
   {
+    m_renderinfo.framepts = *image.pPts; //from image
+    m_renderinfo.frameId = *image.pId; //from image
+    m_renderinfo.frameplayspeed = *image.pPlaySpeed; //from image
+    m_renderinfo.framedur = *image.pFrameDur/DVD_TIME_BASE; //from image
+    m_vclockresync = *image.pVClockResync;
+
     m_presenttime  = presenttime;
     m_presentfield = *image.pSync;
     m_presentstep  = PRESENT_FLIP;
