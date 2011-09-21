@@ -249,7 +249,7 @@ bool CVDPAU::Open(AVCodecContext* avctx, const enum PixelFormat)
     }
 
     InitCSCMatrix(avctx->height);
-    SetWidthHeight(avctx->width,avctx->height);
+    //SetWidthHeight(avctx->width,avctx->height);
 
     m_vdpauOutputMethod = OUTPUT_NONE;
     glInteropFinish = false;
@@ -1385,6 +1385,9 @@ bool CVDPAU::ConfigOutputMethod(AVCodecContext *avctx, AVFrame *pFrame)
     FiniOutputMethod();
     CLog::Log(LOGNOTICE, " (VDPAU) Configure YUV output");
 
+    OutWidth = avctx->width;
+    OutHeight = avctx->height;
+
     m_outPicsNum = std::min(NUM_OUTPUT_SURFACES, NUM_OUTPUT_PICS);
     for (int i = 0; i < m_outPicsNum; i++)
     {
@@ -1408,6 +1411,7 @@ bool CVDPAU::ConfigOutputMethod(AVCodecContext *avctx, AVFrame *pFrame)
     // create mixer thread
     Create();
 
+    SetWidthHeight(avctx->width,avctx->height);
     totalAvailableOutputSurfaces = 0;
 
     int tmpMaxOutputSurfaces = NUM_OUTPUT_SURFACES;
