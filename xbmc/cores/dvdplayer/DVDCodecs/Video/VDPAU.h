@@ -129,6 +129,7 @@ public:
   static void             VDPPreemptionCallbackFunction(VdpDevice device, void* context);
 
   void Present(int flipBufferIdx);
+  bool DiscardPicture(int flipBufferIdx = -1);
   bool ConfigVDPAU(AVCodecContext *avctx, int ref_frames);
   void SpewHardwareAvailable();
   void InitCSCMatrix(int Height);
@@ -180,6 +181,7 @@ public:
   void  InitVDPAUProcs();
   void  FiniVDPAUProcs();
   void  FiniVDPAUOutput();
+
   bool  ConfigOutputMethod(AVCodecContext *avctx, AVFrame *pFrame);
   bool  FiniOutputMethod();
 
@@ -310,12 +312,14 @@ protected:
   OutputPicture m_allOutPic[NUM_OUTPUT_PICS];
   std::deque<OutputPicture*> m_freeOutPic;
   std::deque<OutputPicture*> m_usedOutPic;
+  std::deque<OutputPicture*> m_presentOutPic;
   OutputPicture *m_presentPicture;
   OutputPicture *m_flipBuffer[NUM_RENDERBUF_PICS];
   unsigned int m_mixerCmd;
   CCriticalSection m_mixerSec, m_outPicSec, m_videoSurfaceSec, m_flipSec;
   CEvent m_picSignal;
   CEvent m_msgSignal;
+  CEvent m_flushSignal;
   CEvent m_queueSignal;
   bool m_bVdpauDeinterlacing;
   bool m_binterlacedFrame;
@@ -335,6 +339,9 @@ protected:
   };
   VDPAUOutputMethod m_vdpauOutputMethod;
   VDPAUOutputMethod m_GlInteropStatus;
+
+  void ClearPicUsedForRender(OutputPicture *pic);
+  void ClearMsgUsedForRender(MixerMessage &msg);
 
 #ifdef GL_NV_vdpau_interop
   void GLInitInterop();
