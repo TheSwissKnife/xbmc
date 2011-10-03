@@ -1520,6 +1520,7 @@ void CDVDPlayer::HandlePlaySpeed()
     }
     else
     {
+CLog::Log(LOGDEBUG, "ASB: pMsg->IsType(CDVDMsg::PLAYER_SETSPEED");
       /* ensure that automatically started players are stopped while caching */
       m_clock.SetSpeed(DVD_PLAYSPEED_PAUSE); //ASB: added as surely we also need to pause the clock
       if (m_CurrentAudio.started)
@@ -1612,8 +1613,8 @@ bool CDVDPlayer::CheckStartCaching(CCurrentStream& current)
 //ASB get rid of buffering messages after seek (TODO: look into whether this could be done in a better way to get cache quickly to a reasonable buffer level later eg 20%)
 // for now use CACHESTATE_PVR until decision that this method should be generalised for FULL
     if(current.inited)
-      //SetCaching(CACHESTATE_FULL);
       SetCaching(CACHESTATE_PVR);
+      //SetCaching(CACHESTATE_FULL);
     else
       SetCaching(CACHESTATE_INIT);
     return true;
@@ -1664,21 +1665,18 @@ bool CDVDPlayer::CheckPlayerInit(CCurrentStream& current, unsigned int source)
     current.startpts = current.dts;
 
     bool setclock = false;
-//    if(m_playSpeed == DVD_PLAYSPEED_NORMAL)
-//    {
-//      if(     source == DVDPLAYER_AUDIO)
-//        setclock = !m_CurrentVideo.inited;
-//      else if(source == DVDPLAYER_VIDEO)
-//        setclock = !m_CurrentAudio.inited;
-//    }
-//    else
-//    {
-//      if(source == DVDPLAYER_VIDEO)
-//        setclock = true;
-//    }
-   // only set clock for video source
-   if (source == DVDPLAYER_VIDEO)
-       setclock = true;
+    if(m_playSpeed == DVD_PLAYSPEED_NORMAL)
+    {
+      if(     source == DVDPLAYER_AUDIO)
+        setclock = !m_CurrentVideo.inited;
+      else if(source == DVDPLAYER_VIDEO)
+        setclock = !m_CurrentAudio.inited;
+    }
+    else
+    {
+      if(source == DVDPLAYER_VIDEO)
+        setclock = true;
+    }
 
     double starttime = current.startpts;
     if(m_CurrentAudio.inited
@@ -1699,11 +1697,8 @@ bool CDVDPlayer::CheckPlayerInit(CCurrentStream& current, unsigned int source)
         SendPlayerMessage(new CDVDMsgDouble(CDVDMsg::GENERAL_DELAY, starttime), source);
     }
 
-    double clockoffset; //set clock earlier than dts to allow for delay in decoding/processing through to display
-    //clockoffset = DVD_MSEC_TO_TIME(500);
-    clockoffset = 0.0;
-    //TODO: factor in rendermanager displaydelay function + 50ms (for example) rather than fixed values
-    SendPlayerMessage(new CDVDMsgGeneralResync(current.dts - clockoffset, setclock), source);
+CLog::Log(LOGDEBUG, "ASB CDVDPlayer CDVDMsgGeneralResync current.dts: %f", current.dts);
+    SendPlayerMessage(new CDVDMsgGeneralResync(current.dts, setclock), source);
   }
   return false;
 }
@@ -2078,6 +2073,7 @@ void CDVDPlayer::HandleMessages()
               CLog::Log(LOGDEBUG, "failed to seek subtitle demuxer: %d, success", time);
           }
           FlushBuffers(!msg.GetFlush(), start, msg.GetAccurate());
+CLog::Log(LOGDEBUG, "ASB: player done FlushBuffers");
         }
         else
           CLog::Log(LOGWARNING, "error while seeking");
@@ -2357,6 +2353,7 @@ void CDVDPlayer::SetCaching(ECacheState state)
   || state == CACHESTATE_INIT
   || state == CACHESTATE_PVR)
   {
+CLog::Log(LOGDEBUG, "ASB: SetCaching SetSpeed(DVD_PLAYSPEED_PAUSE)");
     m_clock.SetSpeed(DVD_PLAYSPEED_PAUSE);
     m_dvdPlayerAudio.SetSpeed(DVD_PLAYSPEED_PAUSE);
     m_dvdPlayerAudio.SendMessage(new CDVDMsg(CDVDMsg::PLAYER_STARTED), 1);
@@ -2380,6 +2377,7 @@ void CDVDPlayer::SetCaching(ECacheState state)
 
 void CDVDPlayer::SetPlaySpeed(int speed, bool syncDemux /* = true */)
 {
+CLog::Log(LOGDEBUG, "ASB: SetPlaySpeed speed: %i syncDemux: %i", speed, (int)syncDemux);
   m_messenger.Put(new CDVDMsgInt(CDVDMsg::PLAYER_SETSPEED, speed));
   m_clock.SetSpeed(speed); //ASB added: surely we need to set the clock speed too
   m_dvdPlayerAudio.SetSpeed(speed);
@@ -2541,7 +2539,9 @@ void CDVDPlayer::Seek(bool bPlus, bool bLargeStep)
   }
 
   m_messenger.Put(new CDVDMsgPlayerSeek((int)seek, !bPlus, true, false, restore));
-  SynchronizeDemuxer(100);
+  //TODO: revisit the below change later
+  // This blocks the application for too long - and I can't see we want to synchronize before seeking
+  //SynchronizeDemuxer(100);
   if (seek < 0) seek = 0;
   m_callback.OnPlayBackSeek((int)seek, (int)(seek - time));
 }
@@ -2775,11 +2775,12 @@ void CDVDPlayer::LoadPage(int p, int sp, unsigned char* buffer)
 
   return m_dvdPlayerTeletext.LoadPage(p, sp, buffer);
 }
-
 void CDVDPlayer::SeekTime(__int64 iTime)
 {
+
   int seekOffset = (int)(iTime - GetTime());
   m_messenger.Put(new CDVDMsgPlayerSeek((int)iTime, true, true, true));
+ CLog::Log(LOGDEBUG, "ASB: CDVDPlayer::SeekTime about to SynchronizeDemuxer(100)");
   SynchronizeDemuxer(100);
   m_callback.OnPlayBackSeek((int)iTime, seekOffset);
 }
@@ -3212,7 +3213,7 @@ void CDVDPlayer::FlushBuffers(bool queued, double pts, bool accurate)
       m_CurrentTeletext.started = false;
     }
 
-    //if(pts != DVD_NOPTS_VALUE && m_CurrentVideo.id < 0)
+    if(pts != DVD_NOPTS_VALUE)
       m_clock.Discontinuity(pts);
     UpdatePlayState(0);
   }
