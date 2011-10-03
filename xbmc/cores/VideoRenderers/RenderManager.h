@@ -91,7 +91,7 @@ public:
   void AddOverlay(CDVDOverlay* o, double pts)
   {
     CSharedLock lock(m_sharedSection);
-    m_requestOverlayFlip = true;
+//    m_requestOverlayFlip = true;
     m_overlays.AddOverlay(o, pts);
   }
 
@@ -239,10 +239,11 @@ protected:
   int        m_presentsource;
   CEvent     m_presentevent;
   CEvent     m_flipEvent;
+  int       m_missedTickWait;
 //  CDVDClock  *m_pClock;
 //  bool       m_late;
-  bool       m_bDrain;
-  bool       m_requestOverlayFlip;
+//  bool       m_bDrain;
+//  bool       m_requestOverlayFlip;
 
   OVERLAY::CRenderer m_overlays;
 

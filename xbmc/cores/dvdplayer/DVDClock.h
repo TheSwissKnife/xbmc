@@ -70,7 +70,7 @@ public:
   static double GetAbsoluteClock(bool interpolated = true);
   static double GetNextAbsoluteClockTick(double target);
   static double GetFrequency() { return (double)m_systemFrequency ; }
-  static double WaitAbsoluteClock(double target, double* WaitClockDur = 0);
+  static double WaitAbsoluteClock(double target, double* WaitClockDur = 0, bool lateWaitTick = false);
 
   //when m_ismasterclock is true, CDVDPlayerAudio synchronizes the clock to the audio stream
   //when it's false, CDVDPlayerAudio synchronizes the audio stream to the clock

@@ -177,8 +177,19 @@ void CXBMCRenderManager::WaitPresentTime(double presenttime, bool reset_corr /* 
 //CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::WaitPresentTime targetwaitclock: %f presenttime: %f", targetwaitclock, presenttime);
   targetwaitclock += presentcorr * frametime;  //adjust by our accumulated correction
 
+  double waitDur = 0.0;
+  bool lateWaitTick = false;
+  // wait for the next tick even when already late to try to avoid pacing via flip method which may mean we are less consistent
+  // on which vblank we display on (when refreshrate higher than framerate) which could create a judder
+  if (m_missedTickWait > 3)
+    lateWaitTick = true;
   // we now wait and wish our clock tick result to be targetpos out from target wait
-  double clock = CDVDClock::WaitAbsoluteClock(targetwaitclock * DVD_TIME_BASE) / DVD_TIME_BASE;
+  double clock = CDVDClock::WaitAbsoluteClock(targetwaitclock * DVD_TIME_BASE, &waitDur, lateWaitTick) / DVD_TIME_BASE;
+//CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::WaitPresentTime corrected targetwaitclock: %f presenttime: %f clock: %f waitDur: %f lateWaitTick: %i waitDur / DVD_TIME_BASE: %f frametime: %f", targetwaitclock, presenttime, clock, waitDur, (int)lateWaitTick, waitDur / DVD_TIME_BASE, frametime);
+  if (waitDur / DVD_TIME_BASE < -1 * frametime * 0.4 || waitDur / DVD_TIME_BASE < -0.01 )
+    m_missedTickWait++;
+  else
+    m_missedTickWait = std::max(0, m_missedTickWait - 1);
 
   // error is number(fraction) of frames out we are from where we were trying to correct to
   double error = (clock - targetwaitclock) / frametime - targetpos;
@@ -205,55 +216,55 @@ void CXBMCRenderManager::WaitPresentTime(double presenttime, bool reset_corr /* 
   if ( (m_prevwaitabserror != DVD_NOPTS_VALUE && (fabs(abserror - m_prevwaitabserror) > 0.1)) || 
        (presentcorr > 0.55) || (fabs(presentcorr + error) > 0.6) )
   {
-     // unstable fluctuations in position (implying no point in trying to target), 
-     // or targetting too far forward a correction,
-     // or simply too large the current error target...then reset presentcorr and error buffer
-     // note: allowing the small forward correction overshoot helps to avoid hanging around 
-     // the 0.5 beat zone for long enough to reduce the chances of targetting forward then
-     // backward with high frequency.
-     presentcorr = 0.0;
-     m_prevwaitabserror = DVD_NOPTS_VALUE; //avoid next iteration using the prevabserror value
-     resetbuff = true;
+    // unstable fluctuations in position (implying no point in trying to target), 
+    // or targetting too far forward a correction,
+    // or simply too large the current error target...then reset presentcorr and error buffer
+    // note: allowing the small forward correction overshoot helps to avoid hanging around 
+    // the 0.5 beat zone for long enough to reduce the chances of targetting forward then
+    // backward with high frequency.
+    presentcorr = 0.0;
+    m_prevwaitabserror = DVD_NOPTS_VALUE; //avoid next iteration using the prevabserror value
+    resetbuff = true;
   }
   else if (presentcorr < -0.55)
   {
-     // targetting to far backward, force it to next vblank at next iteration by wrapping
-     // presentcorr straight to 0.5 and reset error buffer
-     // - this avoids travelling through the troublesome beat zone
-     presentcorr = 0.5;
-     m_prevwaitabserror = DVD_NOPTS_VALUE; //avoid next iteration using the prevabserror value
-     resetbuff = true;
+    // targetting to far backward, force it to next vblank at next iteration by wrapping
+    // presentcorr straight to 0.5 and reset error buffer
+    // - this avoids travelling through the troublesome beat zone
+    presentcorr = 0.5;
+    m_prevwaitabserror = DVD_NOPTS_VALUE; //avoid next iteration using the prevabserror value
+    resetbuff = true;
   }
   else if (fabs(presentcorr) < 0.05 && fabs(error) > 0.45)
   {
-     // strongly target in error direction to move clear of beat zone quickly initially
-     presentcorr += 0.1 * error;
+    // strongly target in error direction to move clear of beat zone quickly initially
+    presentcorr += 0.1 * error;
   }
   else if (fabs(presentcorr + error) > 0.45)
   {
-     // we have drifted close to the beat zone so now we try to drift carefully so that 
-     // we only wrap when surely required this is done with 1% adjustments of recent 
-     // error average save error in the buffer
-     m_errorindex = (m_errorindex + 1) % ERRORBUFFSIZE;
-     m_errorbuff[m_errorindex] = error;
+    // we have drifted close to the beat zone so now we try to drift carefully so that 
+    // we only wrap when surely required this is done with 1% adjustments of recent 
+    // error average save error in the buffer
+    m_errorindex = (m_errorindex + 1) % ERRORBUFFSIZE;
+    m_errorbuff[m_errorindex] = error;
 
-     //get the average error from the buffer
-     double avgerror = 0.0;
-     for (int i = 0; i < ERRORBUFFSIZE; i++)
-           avgerror += m_errorbuff[i];
-     avgerror /= ERRORBUFFSIZE;
+    // get the average error from the buffer
+    double avgerror = 0.0;
+    for (int i = 0; i < ERRORBUFFSIZE; i++)
+      avgerror += m_errorbuff[i];
+    avgerror /= ERRORBUFFSIZE;
 
-     presentcorr = presentcorr + avgerror * 0.01;
+    presentcorr = presentcorr + avgerror * 0.01;
   }
   else
   {
-     // adjust by 5% of error directly
-     resetbuff = true; //adjustment is large enough to warrant clearing averages
-     presentcorr = presentcorr + (error * 0.05);
+    // adjust by 5% of error directly
+    resetbuff = true; //adjustment is large enough to warrant clearing averages
+    presentcorr = presentcorr + (error * 0.05);
   }
   if (resetbuff)
   {
-     memset(m_errorbuff, 0, sizeof(m_errorbuff));
+    memset(m_errorbuff, 0, sizeof(m_errorbuff));
   }
   // store new value back in global for access by codec info
   m_presentcorr = presentcorr;
@@ -335,7 +346,7 @@ void CXBMCRenderManager::RenderUpdate(bool flip, bool clear, DWORD flags, DWORD 
 
     if (m_presentstep == PRESENT_IDLE)
       CheckNextBuffer(); //if we have a video pic image output render buffer ready, flip to it and set state to FLIP 
-//CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::RenderUpdate POST NEXTBUFFER m_renderinfo.frameId: %i m_renderinfo.framepts: %f", m_renderinfo.frameId, m_renderinfo.framepts);
+//CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::RenderUpdate POST NEXTBUFFER m_renderinfo.frameId: %i m_renderinfo.framepts: %f m_presentstep: %i", m_renderinfo.frameId, m_renderinfo.framepts, m_presentstep);
 
 // TODO: only flip overlays if the time is about right for the overlay to present: not sure if better to handle at output time, flip time , render time
     m_overlays.FlipRender();
@@ -375,6 +386,7 @@ unsigned int CXBMCRenderManager::PreInit()
   m_presentcorr = 0.0;
   m_presenterr  = 0.0;
   m_errorindex  = 0;
+  m_missedTickWait  = 0;
   memset(m_errorbuff, 0, sizeof(m_errorbuff));
   m_prevwaitabserror = 0.0;
 
@@ -675,9 +687,8 @@ void CXBMCRenderManager::Present()
 
     if (m_presentstep == PRESENT_IDLE)
       CheckNextBuffer();
-//CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::Present POST NEXTBUFFER m_renderinfo.frameId: %i m_renderinfo.framepts: %f", m_renderinfo.frameId, m_renderinfo.framepts);
+//CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::Present POST NEXTBUFFER m_renderinfo.frameId: %i m_renderinfo.framepts: %f m_presentstep: %i", m_renderinfo.frameId, m_renderinfo.framepts, m_presentstep);
 
-// TODO: only flip overlays if the time is about right for the overlay to present: not sure if better to handle at output time, flip time , render time
     if(m_presentstep == PRESENT_FLIP)
     {
       m_overlays.FlipRender();
@@ -917,6 +928,8 @@ int CXBMCRenderManager::WaitForBuffer(volatile bool& bStop)
     }
     lock.Enter();
   }
+  if (bStop)
+    return -1;
   return 1;
 }
 
@@ -945,13 +958,14 @@ void CXBMCRenderManager::UpdateDisplayInfo()
   bool bFrameChange = false;
   if (m_renderinfo.frameId != m_displayinfo[0].frameId)
   {
-     bFrameChange = true;
-     int framesDropped = m_renderinfo.frameId - m_displayinfo[0].frameId - 1;
-     if (framesDropped > 0)
-        CLog::Log(LOGERROR, "CRenderManager::UpdateDisplayInfo detected frames dropped by RenderManager: %i", framesDropped);
+    bFrameChange = true;
+    int framesDropped = m_renderinfo.frameId - m_displayinfo[0].frameId - 1;
+    if (framesDropped > 0)
+      CLog::Log(LOGERROR, "CRenderManager::UpdateDisplayInfo detected frames dropped by RenderManager: %i", framesDropped);
   }
-  //else
-  //  return;
+  else
+    return; //assume for now there is no reason collect information in this case
+
   double clocktickafterpostflipclock; 
   double signal_to_view_delay;
   if (bFrameChange)
@@ -1053,7 +1067,6 @@ void CXBMCRenderManager::UpdateDisplayInfo()
       displayframeclock1 != DVD_NOPTS_VALUE && displayframeclock2 != DVD_NOPTS_VALUE &&
       displayrefreshdur != 0.0 && fps > 0.0 &&
       displayframepts1 != DVD_NOPTS_VALUE && displayframepts2 != DVD_NOPTS_VALUE)
-//      displayframedur1 == displayframedur2)
   {  
      //the elasped clock time estimate between previous pts changes
      double displayclockelapsed1 = displayframeclock1 - displayframeclock2;
@@ -1074,7 +1087,7 @@ void CXBMCRenderManager::UpdateDisplayInfo()
               displayclockelapsed1 <= 0.9 * displayrefreshdur)
            m_longdisplaycount--;
      }
-  }
+   } 
 }
 
 void CXBMCRenderManager::NotifyDisplayFlip()
@@ -1189,6 +1202,7 @@ void CXBMCRenderManager::CheckNextBuffer()
   if(presenttime - clocktime > MAXPRESENTDELAY)
     presenttime = clocktime + MAXPRESENTDELAY;
 
+//CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::CheckNextBuffer about to request flip index: %i", index);
 //TODO: we should not request flip too early and not flip too late...improve to give some of the display dislay logic and only present if within some acceptable range (eg should be within some duration defined by Application.cpp related to how often it is currently rendering)
   if(g_graphicsContext.IsFullScreenVideo()
       || presenttime <= clocktime)
@@ -1201,6 +1215,7 @@ void CXBMCRenderManager::CheckNextBuffer()
 
     m_presenttime  = presenttime;
     m_presentfield = *image.pSync;
+//CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::CheckNextBuffer setting PRESENT_FLIP");
     m_presentstep  = PRESENT_FLIP;
     m_presentsource = index;
     m_presentmethod = g_settings.m_currentVideoSettings.m_InterlaceMethod;

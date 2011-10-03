@@ -77,7 +77,7 @@ class CVideoReferenceClock : public CThread
 
     int64_t DurUntilNextVBlank(int64_t ClockInterval = 0);
     int64_t TimeOfNextVBlank(int64_t wait = 0, int safetyTolerance = 0);
-    int64_t Wait(int64_t Target = 0, int64_t* WaitedTime = 0);
+    int64_t Wait(int64_t Target = 0, int64_t* WaitedTime = 0, bool lateWaitTick = false);
 
     bool    WaitStarted(int MSecs);
     bool    WaitStable(int MSecs);

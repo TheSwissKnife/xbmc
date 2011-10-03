@@ -457,7 +457,6 @@ void CVideoReferenceClock::CleanupGLX()
     XFree(m_vInfo);
     m_vInfo = NULL;
   }
-     CLog::Log(LOGDEBUG, "ASB: CVideoReferenceClock: CleanupGLX glXMakeCurrent");
   if (m_Context)
   {
     glXMakeCurrent(m_Dpy, None, NULL);
@@ -1654,7 +1653,7 @@ int64_t CVideoReferenceClock::GetNextTickTime(int64_t Target /* = 0 */)
 //it waits until a certain timestamp has passed, used for displaying videoframes at the correct moment (0 value targets next vblank)
 //if WaitedTime supplied return the interpolated time duration we actually waited or if we did not wait, the negative or zero time between target and interpolated
 //if using vblank we wait for a vblank to make clock tick past the target time if not already late based on tick time
-int64_t CVideoReferenceClock::Wait(int64_t Target /* = 0 */, int64_t* WaitedTime /* = 0 */)
+int64_t CVideoReferenceClock::Wait(int64_t Target /* = 0 */, int64_t* WaitedTime /* = 0 */, bool lateWaitTick /* = false */)
 {
   int SleepTime = 0;
   int64_t NowStart;
@@ -1664,7 +1663,7 @@ int64_t CVideoReferenceClock::Wait(int64_t Target /* = 0 */, int64_t* WaitedTime
   if (m_UseVblank) //when true the vblank is used as clock source
   {
     if (Target == 0)
-       Target = GetNextTickTime() - (2 * m_SystemFrequency / 1000); // next tick guess less 2ms
+      Target = GetNextTickTime() - (2 * m_SystemFrequency / 1000); // next tick guess less 2ms
     if (WaitedTime)
       *WaitedTime = 0;
     int64_t CurrInterpolatedTime;
@@ -1674,14 +1673,25 @@ int64_t CVideoReferenceClock::Wait(int64_t Target /* = 0 */, int64_t* WaitedTime
     int64_t pVBlankInterval = m_PVblankInterval;
     if (CurrTime >= Target)
     {
-       if (WaitedTime)
-          *WaitedTime = std::min((int64_t)0, Target - CurrInterpolatedTime);
-       return CurrTime;
+      if (lateWaitTick)
+      {
+        // loop looking for CurrTime to increment and return that
+        int64_t StartCurrTime = CurrTime;
+        int i = 0;
+        while (StartCurrTime == CurrTime && i < 50)
+        {
+          m_VblankEvent.WaitMSec(1);
+          CurrTime = GetTime(&CurrInterpolatedTime);
+        }
+      }
+      if (WaitedTime)
+        *WaitedTime = std::min((int64_t)0, Target - CurrInterpolatedTime);
+      return CurrTime;
     }
 
     estimatedWait = DurUntilNextVBlank(Target - CurrInterpolatedTime);
     if (estimatedWait > 5 * m_SystemFrequency)  // cap to 5 seconds in this unexpected case (to protect blocking application for longer than that)
-        estimatedWait = 5 * m_SystemFrequency;
+      estimatedWait = 5 * m_SystemFrequency;
     SingleLock.Leave();
 
     NowStart = CurrentHostCounter();
@@ -1697,13 +1707,13 @@ int64_t CVideoReferenceClock::Wait(int64_t Target /* = 0 */, int64_t* WaitedTime
       waitMs -= SleepTime;
       if (SleepTime == 50)  // if we have slept the full 50ms then check time again - just in case unexpected events occur
       {
-         CurrTime = GetTime(&CurrInterpolatedTime);
-         if (CurrTime >= Target)
-         {
-            if (WaitedTime)
-               *WaitedTime = std::max((int64_t)1, CurrInterpolatedTime - StartTime);
-            return CurrTime;
-         }
+        CurrTime = GetTime(&CurrInterpolatedTime);
+        if (CurrTime >= Target)
+        {
+          if (WaitedTime)
+            *WaitedTime = std::max((int64_t)1, CurrInterpolatedTime - StartTime);
+          return CurrTime;
+        }
       }
     }
     m_VblankEvent.WaitMSec(max(waitMs + 2, 1));
@@ -1714,20 +1724,20 @@ int64_t CVideoReferenceClock::Wait(int64_t Target /* = 0 */, int64_t* WaitedTime
      int remainMs = (int)((NowStart + estimatedWait - CurrentHostCounter()) * 1000 / m_SystemFrequency) + 1;
      while (CurrTime < Target && remainMs > -timeout)
      {
-        // wait now with min wait 1 ms
-        if (remainMs > 1)
-          m_VblankEvent.WaitMSec(remainMs);
-        else
-          m_VblankEvent.WaitMSec(1);
+       // wait now with min wait 1 ms
+       if (remainMs > 1)
+         m_VblankEvent.WaitMSec(remainMs);
+       else
+         m_VblankEvent.WaitMSec(1);
 
-        CurrTime = GetTime(&CurrInterpolatedTime);
-        if (CurrTime < Target)
-           remainMs = (int)((NowStart + estimatedWait - CurrentHostCounter()) * 1000 / m_SystemFrequency) + 1;
+       CurrTime = GetTime(&CurrInterpolatedTime);
+       if (CurrTime < Target)
+         remainMs = (int)((NowStart + estimatedWait - CurrentHostCounter()) * 1000 / m_SystemFrequency) + 1;
      }
 
     // return in WaitedTime if supplied our total wait
     if (WaitedTime)
-       *WaitedTime = std::max((int64_t)1, CurrInterpolatedTime - StartTime);
+      *WaitedTime = std::max((int64_t)1, CurrInterpolatedTime - StartTime);
     return CurrTime;
   }
   else
@@ -1744,10 +1754,11 @@ int64_t CVideoReferenceClock::Wait(int64_t Target /* = 0 */, int64_t* WaitedTime
 
     Now = CurrentHostCounter();
     if (SleepTime > 0 && WaitedTime)
-       *WaitedTime = Now - NowStart;
+      *WaitedTime = Now - NowStart;
     return Now + ClockOffset;
   }
 }
+
 void CVideoReferenceClock::SendVblankSignal()
 {
   m_VblankEvent.Set();

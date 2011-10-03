@@ -94,7 +94,7 @@ double CDVDClock::GetNextAbsoluteClockTick(double target)
   return SystemToAbsolute(system);
 }
 
-double CDVDClock::WaitAbsoluteClock(double target, double* WaitClockDur /*= 0 */)
+double CDVDClock::WaitAbsoluteClock(double target, double* WaitClockDur /*= 0 */, bool lateWaitTick /* = false */)
 {
   CSingleLock lock(m_systemsection);
   CheckSystemClock();
@@ -104,14 +104,16 @@ double CDVDClock::WaitAbsoluteClock(double target, double* WaitClockDur /*= 0 */
 
   lock.Leave();
 
-  int64_t* WaitedTime;
-  if (!WaitClockDur)
-     WaitedTime = 0;
+  int64_t WaitedTime;
      
   systemtarget = AbsoluteToSystem(target);
-  system = g_VideoReferenceClock.Wait(systemtarget, WaitedTime);
-  if (WaitedTime)
-     *WaitClockDur = *WaitedTime / freq * DVD_TIME_BASE;
+  if (!WaitClockDur)
+    system = g_VideoReferenceClock.Wait(systemtarget, 0, lateWaitTick);
+  else
+  {
+    system = g_VideoReferenceClock.Wait(systemtarget, &WaitedTime, lateWaitTick);
+    *WaitClockDur = (double)WaitedTime / freq * DVD_TIME_BASE;
+  }
 
   return SystemToAbsolute(system);
 }
