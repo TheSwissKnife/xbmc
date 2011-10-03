@@ -393,7 +393,7 @@ void CDVDPlayerVideo::Process()
     CDVDMsg* pMsg;
     MsgQueueReturnCode ret;
 
-CLog::Log(LOGDEBUG, "CDVDPlayerVideo m_messageQueue.Get iQueueTimeOut: %i iPriority: %i", iQueueTimeOut, iPriority);
+//CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo m_messageQueue.Get iQueueTimeOut: %i iPriority: %i", iQueueTimeOut, iPriority);
     ret = m_messageQueue.Get(&pMsg, iQueueTimeOut, iPriority);
 
     if (MSGQ_IS_ERROR(ret) || ret == MSGQ_ABORT)

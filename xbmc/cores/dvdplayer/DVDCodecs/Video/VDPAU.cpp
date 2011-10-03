@@ -2455,7 +2455,7 @@ void CVDPAU::Present(int flipBufferIdx)
     { CSingleLock lock(m_flipSec);
       m_flipBuffer[flipBufferIdx] = pic; }
 
-CLog::Log(LOGDEBUG, "CVDPAU::Present done flipped flipBufferIdx: %i pic: %u m_presentOutPic.size(): %i", flipBufferIdx, (unsigned int)pic, m_presentOutPic.size());
+//CLog::Log(LOGDEBUG, "ASB: CVDPAU::Present done flipped flipBufferIdx: %i pic: %u m_presentOutPic.size(): %i", flipBufferIdx, (unsigned int)pic, m_presentOutPic.size());
   }
   else
     CLog::Log(LOGWARNING, "CVDPAU::Present Failed to move flip buffer as there is no present picture");
