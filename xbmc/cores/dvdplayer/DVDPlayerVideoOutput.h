@@ -90,14 +90,15 @@ public:
   virtual ~CDVDPlayerVideoOutput();
 
   void Start();
-  void Reset(bool resetConfigure = false);
+  void Reset(int wait = 0);
   void Dispose();
   bool SendMessage(ToOutputMessage &msg, int timeout = 0);
   bool GetMessage(FromOutputMessage &msg, int timeout = 0);
   int GetToMessageSize();
   void SetCodec(CDVDVideoCodec *codec);
-  void SetPts(double pts);
+  void SetRendererConfiguring(bool configuring = true);
   double GetPts();
+
 protected:
   void OnStartup();
   void OnExit();
@@ -107,11 +108,13 @@ protected:
   bool RefreshGlxContext();
   bool DestroyGlxContext();
   bool RendererConfiguring();
-  void SetRendererConfiguring(bool configuring = true);
   bool Recovering();
   void SetRecovering(bool recover = true);
+  bool Resetting();
+  void SetResetting(bool reset = true);
   bool ToMessageQIsEmpty();
   bool ResyncClockToVideo(double pts, int playerSpeed, bool bFlushed = false);
+  void SetPts(double pts);
   ToOutputMessage GetToMessage();
 
   double m_pts;
@@ -121,13 +124,15 @@ protected:
   std::queue<FromOutputMessage> m_fromOutputMessage;
   CEvent m_toMsgSignal, m_fromMsgSignal;
   CCriticalSection m_criticalSection;
-  CCriticalSection m_msgSection;
+  CCriticalSection m_toMsgSection;
+  CCriticalSection m_fromMsgSection;
   CDVDPlayerVideo *m_pVideoPlayer;
   GLXContext m_glContext;
   GLXWindow m_glWindow;
   Pixmap    m_pixmap;
   GLXPixmap m_glPixmap;
   bool m_recover;
+  bool m_reset;
   CDVDClock* m_pClock;
   VO_STATE m_state;
   bool m_configuring;
