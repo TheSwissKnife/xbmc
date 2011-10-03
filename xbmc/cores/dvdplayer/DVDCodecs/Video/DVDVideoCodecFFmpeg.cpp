@@ -573,7 +573,10 @@ int CDVDVideoCodecFFmpeg::Decode(BYTE* pData, int iSize, double dts, double pts)
     {
       result = m_pHardware->Check(m_pCodecContext);
       if (result & VC_FLUSHED)
+      {
          Reset();
+         return result | VC_DROPPED; //no point in continuing if we are told of a flush
+      }
     }
     else
     {
@@ -1038,6 +1041,7 @@ bool CDVDVideoCodecFFmpeg::GetPictureCommon(DVDVideoPicture* pDvdVideoPicture)
   if (!m_pFrame)
     return false;
 
+  //TODO: surely iRepeatPicture should be the same as m_pFrame->repeat_pict so that it reflects the number of repeats (including for progressive repeats)
   pDvdVideoPicture->iRepeatPicture = 0.5 * m_pFrame->repeat_pict;
   pDvdVideoPicture->iFlags = DVP_FLAG_ALLOCATED;
   pDvdVideoPicture->iFlags |= m_pFrame->interlaced_frame ? DVP_FLAG_INTERLACED : 0;
@@ -1073,13 +1077,14 @@ bool CDVDVideoCodecFFmpeg::GetPictureCommon(DVDVideoPicture* pDvdVideoPicture)
   else
     pDvdVideoPicture->pts = DVD_NOPTS_VALUE;
 
-  // flags supplied by Decode from the hints present at time of input to decoder
   pDvdVideoPicture->iFlags |= m_iFrameFlags;
 
   if(!m_started)
     pDvdVideoPicture->iFlags |= DVP_FLAG_DROPPED;
 
   pDvdVideoPicture->iGroupId = m_iGroupId;
+
+//CLog::Log(LOGDEBUG,"ASB: CDVDVideoCodecFFmpeg::GetPictureCommon pDvdVideoPicture->pts: %f pDvdVideoPicture->iDisplayWidth: %i pDvdVideoPicture->iDisplayHeight: %i", pDvdVideoPicture->pts, (int)pDvdVideoPicture->iDisplayWidth, (int)pDvdVideoPicture->iDisplayHeight);
 
   return true;
 }
