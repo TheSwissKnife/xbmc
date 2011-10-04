@@ -682,10 +682,13 @@ void CDVDPlayerAudio::HandleSyncError(double duration)
   double clock = m_pClock->GetClock();
   double error = m_ptsOutput.Current() - clock;
   int64_t now;
+  m_silence = false; //ASB: temporary
 
   //if( fabs(error) > DVD_MSEC_TO_TIME(100) || m_syncclock )
   //audio based clock sync is bad idea for smooth video
-  if( fabs(error) > DVD_MSEC_TO_TIME(300) && !(m_pClock->VideoIsController()))
+  //if( fabs(error) > DVD_MSEC_TO_TIME(300) && !(m_pClock->VideoIsController()))
+  //TODO: ASB temporarily set to 2 secs to stop bloody audio breaking video sync efforts
+  if( fabs(error) > DVD_MSEC_TO_TIME(2000) && !(m_pClock->VideoIsController()))
   {
     m_pClock->Discontinuity(clock+error);
     if(m_speed == DVD_PLAYSPEED_NORMAL)
@@ -700,6 +703,8 @@ void CDVDPlayerAudio::HandleSyncError(double duration)
 
     return;
   }
+  else if (fabs(error) > DVD_MSEC_TO_TIME(300))  //ASB temporarily silence
+    m_silence = true;
   else if( fabs(error) > DVD_MSEC_TO_TIME(250) )
   {
     //TODO: this is temporary until I sort out audio to clock sync during video resync

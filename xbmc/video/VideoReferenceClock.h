@@ -59,7 +59,7 @@ class CD3DCallback : public ID3DResource
 #define VBLANKTIMESSIZE 201
 // confidence levels for the recorded vblank times
 #define VBLANKTIMESQUITECONFIDENT 30
-#define VBLANKTIMESVERYCONFIDENT 70
+#define VBLANKTIMESVERYCONFIDENT 100
 
 class CVideoReferenceClock : public CThread
 {

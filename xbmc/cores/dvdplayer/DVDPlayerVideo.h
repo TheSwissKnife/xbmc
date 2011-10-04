@@ -150,6 +150,7 @@ protected:
   void SetPlaySpeed(int speed);
   void SetProcessNextFrame(bool state = true);
   bool GetProcessNextFrame();
+  void ReOpenVideoCodec();
 
   void ProcessVideoUserData(DVDVideoUserData* pVideoUserData, double pts);
 

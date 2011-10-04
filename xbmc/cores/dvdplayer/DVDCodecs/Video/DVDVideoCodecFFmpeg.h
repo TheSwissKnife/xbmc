@@ -67,6 +67,7 @@ public:
   virtual void Dispose();
   virtual int Decode(BYTE* pData, int iSize, double dts, double pts);
   virtual void Reset();
+  virtual bool Reset(bool dispose);
   bool GetPictureCommon(DVDVideoPicture* pDvdVideoPicture);
   virtual bool GetPicture(DVDVideoPicture* pDvdVideoPicture);
   virtual bool DiscardPicture();

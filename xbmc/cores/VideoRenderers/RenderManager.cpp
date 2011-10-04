@@ -149,6 +149,9 @@ void CXBMCRenderManager::WaitPresentTime(double presenttime, bool reset_corr /* 
   //  then need to target a closer tick (resulting in a short or long display of a frame and if
   //  short likely subsequently a frame drop from player)
 
+  if (presenttime < 0.0)
+    return;  //bad data in just return and let stream play at refresh rate pace
+
   double signal_to_view_delay = GetDisplaySignalToViewDelay();
   double frametime;
   int fps = g_VideoReferenceClock.GetRefreshRate(&frametime);
@@ -185,7 +188,6 @@ void CXBMCRenderManager::WaitPresentTime(double presenttime, bool reset_corr /* 
     lateWaitTick = true;
   // we now wait and wish our clock tick result to be targetpos out from target wait
   double clock = CDVDClock::WaitAbsoluteClock(targetwaitclock * DVD_TIME_BASE, &waitDur, lateWaitTick) / DVD_TIME_BASE;
-//CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::WaitPresentTime corrected targetwaitclock: %f presenttime: %f clock: %f waitDur: %f lateWaitTick: %i waitDur / DVD_TIME_BASE: %f frametime: %f", targetwaitclock, presenttime, clock, waitDur, (int)lateWaitTick, waitDur / DVD_TIME_BASE, frametime);
   if (waitDur / DVD_TIME_BASE < -1 * frametime * 0.4 || waitDur / DVD_TIME_BASE < -0.01 )
     m_missedTickWait++;
   else
@@ -196,6 +198,7 @@ void CXBMCRenderManager::WaitPresentTime(double presenttime, bool reset_corr /* 
   // abserror is number(fraction) of frames out we are from where we shuuld be without correction factor
   double abserror = error + presentcorr;
   m_presenterr = error;
+CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::WaitPresentTime corrected targetwaitclock: %f presenttime: %f clock: %f waitDur: %f lateWaitTick: %i waitDur / DVD_TIME_BASE: %f frametime: %f error: %f", targetwaitclock, presenttime, clock, waitDur, (int)lateWaitTick, waitDur / DVD_TIME_BASE, frametime, error);
 
   // we should be careful not too overshoot if we are getting close to a wrap boundary to avoid
   // swinging back and forward unnecessarily:
@@ -338,7 +341,7 @@ void CXBMCRenderManager::Update(bool bPauseDrawing)
 void CXBMCRenderManager::RenderUpdate(bool flip, bool clear, DWORD flags, DWORD alpha)
 {
   //attempt to flip forward to next video frame or overlay only if flip == true
-//CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::RenderUpdate m_renderinfo.frameId: %i m_renderinfo.framepts: %f flip: %i", m_renderinfo.frameId, m_renderinfo.framepts, (bool)flip);
+CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::RenderUpdate m_renderinfo.frameId: %i m_renderinfo.framepts: %f flip: %i", m_renderinfo.frameId, m_renderinfo.framepts, (bool)flip);
   if (flip)
   { CRetakeLock<CExclusiveLock> lock(m_sharedSection);
     if (!m_pRenderer)
@@ -346,7 +349,7 @@ void CXBMCRenderManager::RenderUpdate(bool flip, bool clear, DWORD flags, DWORD 
 
     if (m_presentstep == PRESENT_IDLE)
       CheckNextBuffer(); //if we have a video pic image output render buffer ready, flip to it and set state to FLIP 
-//CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::RenderUpdate POST NEXTBUFFER m_renderinfo.frameId: %i m_renderinfo.framepts: %f m_presentstep: %i", m_renderinfo.frameId, m_renderinfo.framepts, m_presentstep);
+CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::RenderUpdate POST NEXTBUFFER m_renderinfo.frameId: %i m_renderinfo.framepts: %f m_presentstep: %i", m_renderinfo.frameId, m_renderinfo.framepts, m_presentstep);
 
 // TODO: only flip overlays if the time is about right for the overlay to present: not sure if better to handle at output time, flip time , render time
     m_overlays.FlipRender();
@@ -680,14 +683,14 @@ float CXBMCRenderManager::GetMaximumFPS()
 
 void CXBMCRenderManager::Present()
 {
-//CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::Present m_renderinfo.frameId: %i m_renderinfo.framepts: %f", m_renderinfo.frameId, m_renderinfo.framepts);
+CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::Present m_renderinfo.frameId: %i m_renderinfo.framepts: %f", m_renderinfo.frameId, m_renderinfo.framepts);
   { CRetakeLock<CExclusiveLock> lock(m_sharedSection);
     if (!m_pRenderer)
       return;
 
     if (m_presentstep == PRESENT_IDLE)
       CheckNextBuffer();
-//CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::Present POST NEXTBUFFER m_renderinfo.frameId: %i m_renderinfo.framepts: %f m_presentstep: %i", m_renderinfo.frameId, m_renderinfo.framepts, m_presentstep);
+CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::Present POST NEXTBUFFER m_renderinfo.frameId: %i m_renderinfo.framepts: %f m_presentstep: %i", m_renderinfo.frameId, m_renderinfo.framepts, m_presentstep);
 
     if(m_presentstep == PRESENT_FLIP)
     {
@@ -1084,7 +1087,8 @@ void CXBMCRenderManager::UpdateDisplayInfo()
         // incorrectly)
         if (displayclockelapsed2 > (displayframedur1 + displayframedur2) * 0.95 && 
               displayclockelapsed2 < (displayframedur1 + displayframedur2) * 1.05 &&
-              displayclockelapsed1 <= 0.9 * displayrefreshdur)
+              displayclockelapsed2 - displayclockelapsed1 > displayframedur2 + 0.5 * displayrefreshdur &&
+              displayclockelapsed1 < displayrefreshdur * 0.9 && m_longdisplaycount > 0)
            m_longdisplaycount--;
      }
    } 
@@ -1098,7 +1102,7 @@ void CXBMCRenderManager::NotifyDisplayFlip()
   UpdatePostFlipClock();
   UpdateDisplayInfo();
 
-//CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::NotifyDisplayFlip m_renderinfo.frameId: %i m_renderinfo.framepts: %f", m_renderinfo.frameId, m_renderinfo.framepts);
+CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::NotifyDisplayFlip m_renderinfo.frameId: %i m_renderinfo.framepts: %f", m_renderinfo.frameId, m_renderinfo.framepts);
 
   CRetakeLock<CExclusiveLock> lock(m_sharedSection);
 
@@ -1130,8 +1134,11 @@ double CXBMCRenderManager::GetDisplaySignalToViewDelay()
   //       device and video signal method and allowing multiples of vblank duration
   //       eg possibly half vb is good estimate for analog display, but with digital 1 vb + internal processing delay)
 
-  // for now just go with half refresh duration
-  return (m_displayinfo[0].refreshdur / 2);
+  // for now just go with a single refresh duration
+  double displayrefreshdur = m_displayinfo[0].refreshdur;
+  if (displayrefreshdur == 0.0)
+    g_VideoReferenceClock.GetRefreshRate(&displayrefreshdur); //fps == 0 or less assume no vblank based reference clock
+  return displayrefreshdur;
 }
 
 double CXBMCRenderManager::GetDisplayDelay()
@@ -1170,7 +1177,6 @@ double CXBMCRenderManager::GetCurrentDisplayPts(int& playspeed, double& callcloc
   }
 
 //CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::GetCurrentDisplayPts clock: %f m_displayinfo[0].frameclock: %f playspeed: %i m_displayinfo[0].refreshdur: %f", clock, m_displayinfo[0].frameclock, playspeed, m_displayinfo[0].refreshdur);
-  //if ( (playspeed == DVD_PLAYSPEED_PAUSE && clock >= m_displayinfo[0].frameclock) ||
   if ( (playspeed == DVD_PLAYSPEED_PAUSE) ||
        (clock >= m_displayinfo[0].frameclock + m_displayinfo[0].refreshdur) ) 
   {
@@ -1202,8 +1208,8 @@ void CXBMCRenderManager::CheckNextBuffer()
   if(presenttime - clocktime > MAXPRESENTDELAY)
     presenttime = clocktime + MAXPRESENTDELAY;
 
-//CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::CheckNextBuffer about to request flip index: %i", index);
-//TODO: we should not request flip too early and not flip too late...improve to give some of the display dislay logic and only present if within some acceptable range (eg should be within some duration defined by Application.cpp related to how often it is currently rendering)
+CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::CheckNextBuffer about to request flip index: %i", index);
+//TODO: we should not request flip too early and not flip too late...improve to give some of the display delay logic and only present if within some acceptable range (eg should be within some duration defined by Application.cpp related to how often it is currently rendering)
   if(g_graphicsContext.IsFullScreenVideo()
       || presenttime <= clocktime)
   {
@@ -1215,7 +1221,7 @@ void CXBMCRenderManager::CheckNextBuffer()
 
     m_presenttime  = presenttime;
     m_presentfield = *image.pSync;
-//CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::CheckNextBuffer setting PRESENT_FLIP");
+CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::CheckNextBuffer setting PRESENT_FLIP");
     m_presentstep  = PRESENT_FLIP;
     m_presentsource = index;
     m_presentmethod = g_settings.m_currentVideoSettings.m_InterlaceMethod;

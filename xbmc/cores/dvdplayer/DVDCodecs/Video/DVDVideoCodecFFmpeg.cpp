@@ -138,6 +138,7 @@ CDVDVideoCodecFFmpeg::CDVDVideoCodecFFmpeg() : CDVDVideoCodec()
   m_iLastKeyframe = 0;
   m_dts = DVD_NOPTS_VALUE;
   m_started = false;
+  m_bExpectingDecodedFrame = false;
 }
 
 CDVDVideoCodecFFmpeg::~CDVDVideoCodecFFmpeg()
@@ -176,7 +177,7 @@ bool CDVDVideoCodecFFmpeg::Open(CDVDStreamInfo &hints, CDVDCodecOptions &options
         if ((pCodec->id == CODEC_ID_MPEG4) && !g_advancedSettings.m_videoAllowMpeg4VDPAU)
           continue;
 
-        CLog::Log(LOGNOTICE,"CDVDVideoCodecFFmpeg::Open() Creating VDPAU(%ix%i, %d)",hints.width, hints.height, hints.codec);
+        CLog::Log(LOGNOTICE,"CDVDVideoCodecFFmpeg::Open() Creating VDPAU(hints: %ix%i, %d)",hints.width, hints.height, hints.codec);
         CVDPAU* vdp = new CVDPAU();
         m_pCodecContext->codec_id = hints.codec;
         m_pCodecContext->width    = hints.width;
@@ -281,6 +282,9 @@ bool CDVDVideoCodecFFmpeg::Open(CDVDStreamInfo &hints, CDVDCodecOptions &options
 
 void CDVDVideoCodecFFmpeg::Dispose()
 {
+CLog::Log(LOGDEBUG,"ASB: CDVDVideoCodecFFmpeg::Dispose ");
+  HwFreeResources();
+
   if (m_pFrame) m_dllAvUtil.av_free(m_pFrame);
   m_pFrame = NULL;
 
@@ -431,7 +435,7 @@ void CDVDVideoCodecFFmpeg::SetDropMethod(bool bDrop, bool bInputPacket /*= true 
         else
         {
            //only set drop state in hardware if we are subtle dropping else we could drop multiple times
-           //- note that subtle dropping can and will result in earier data being dropped
+           //- note that subtle dropping can and will result in earlier data being dropped
            if (SubtleHardwareDropping())
            {
               m_bHardwareDropRequested = true;
@@ -529,12 +533,20 @@ int CDVDVideoCodecFFmpeg::Decode(BYTE* pData, int iSize, double dts, double pts)
   bool bSoftDrain = false; // whether to try to drain hardware post decode buffered data 
 
   if (!m_pCodecContext)
+  {
+    CLog::Log(LOGERROR, "%s - avcodec_decode_video has no context", __FUNCTION__);
     return VC_ERROR;
+  }
 
   if (pData && iSize > 0)
   {
      bInputData = true;
      m_iLastKeyframe++;
+  }
+  else if (!m_started)
+  {
+    // if no input packet and we have not yet started safest bet is to return asking for more data
+    return VC_BUFFER;
   }
 
   if (HintHurryUp())
@@ -546,6 +558,8 @@ int CDVDVideoCodecFFmpeg::Decode(BYTE* pData, int iSize, double dts, double pts)
   SetDropMethod(m_bDropRequested, bInputData);
   if (m_bDropRequested && (!m_bHardwareDropRequested)) 
      bDropRequested = true;
+//ASB
+bool hdrop = m_bHardwareDropRequested;
 
   // workaround current bug in ffmpeg : 
   // for first field of field based input a drop request using skip_frame causes output corruption 
@@ -604,6 +618,8 @@ int CDVDVideoCodecFFmpeg::Decode(BYTE* pData, int iSize, double dts, double pts)
   }
 
   m_dts = dts;
+  if (pts == 0.0) //quick hack to allow us to passthrough a zero by giving a tiny shift
+    pts += 0.000000001;
   int64_t pts_opaque = pts_dtoi(pts);
   m_pCodecContext->reordered_opaque = pts_opaque;
 
@@ -621,7 +637,7 @@ int CDVDVideoCodecFFmpeg::Decode(BYTE* pData, int iSize, double dts, double pts)
 
   if (bDecoderDropRequested)
      m_iDecoderDropRequest++;
-  
+
   len = m_dllAvCodec.avcodec_decode_video2(m_pCodecContext, m_pFrame, &iGotPicture, &avpkt);
 
   int iInputPktNum = m_iDecoderInputPktNumber;
@@ -629,6 +645,7 @@ int CDVDVideoCodecFFmpeg::Decode(BYTE* pData, int iSize, double dts, double pts)
   if (bInputData)
   {
      //assume if we are given data that we have an input packet
+CLog::Log(LOGDEBUG,"ASB: CDVDVideoCodecFFmpeg::Decode bInputData iInputPktNum: %i bDropRequested: %i bDecoderDropRequested: %i hdrop: %i pts: %f len: %i iGotPicture: %i m_started: %i", iInputPktNum, (int)bDropRequested, (int)bDecoderDropRequested, (int)hdrop, pts, len, iGotPicture, (int)m_started);
      RecordPacketInfoInHist(iInputPktNum, pts_opaque, bDropRequested, bDecoderDropRequested);
      m_iDecoderInputPktNumber++; //increment for next 
   }
@@ -659,11 +676,13 @@ int CDVDVideoCodecFFmpeg::Decode(BYTE* pData, int iSize, double dts, double pts)
   if (bInputData && len == 0 && m_bExpectingDecodedFrame)
   {
      // instant input drop
+CLog::Log(LOGDEBUG,"ASB: CDVDVideoCodecFFmpeg::Decode bInputData && len == 0 && m_bExpectingDecodedFrame");
      iDecodeResState |= VC_DROPPED;
   }
   else if (m_bExpectingDecodedFrame && (!iGotPicture))
   {
      // drop related to a request in the past
+CLog::Log(LOGDEBUG,"ASB: CDVDVideoCodecFFmpeg::Decode m_bExpectingDecodedFrame && (!iGotPicture)");
      iDecodeResState |= VC_DROPPED;
   }
   // count and categorise the decoder drops
@@ -857,7 +876,10 @@ void CDVDVideoCodecFFmpeg::RecordPacketInfoInHist(int iInputPktNum, int64_t pts_
   if (HintNoPostProc())
      iFrameFlags |= DVP_FLAG_NOPOSTPROC;
   if (HintNoPresent())
+{
+CLog::Log(LOGDEBUG,"ASB: CDVDVideoCodecFFmpeg::RecordPacketInfoInHist() setting m_iFrameFlags DVP_FLAG_DROPPED iInputPktNum: %i bDecoderDropRequested: %i bDropRequested: %i", iInputPktNum, (int)bDecoderDropRequested, (int)bDropRequested);
      iFrameFlags |= DVP_FLAG_DROPPED; //must be dropped as soon as possible
+}
   ResetHintNoPresent(); //don't let 'no-present' linger now we have registered it for this packet
   if (bDropRequested)
      iFrameFlags |= DVP_FLAG_DROPREQUESTED; //mark as a targetted drop for output stages to utilise if required
@@ -909,14 +931,14 @@ void CDVDVideoCodecFFmpeg::SetFrameFlagsFromHist(int iInputPktNum)
         if ((m_input_hist[bestmatch].field_no_out) || (m_iMaxDecoderIODelay < delay) ||
             (m_input_hist[bestmatch].input_pos > iInputPktNum))
         {
-           CLog::Log(LOGDEBUG,"CDVDVideoCodecFFmpeg::SetFrameFlags() decoder history search matched on unexpected data pts: %f, field_no_out: %i, drop: %i, flags: %i, input_pos: %i, current input packet number: %i", 
+           CLog::Log(LOGDEBUG,"CDVDVideoCodecFFmpeg::SetFrameFlagsFromHist() decoder history search matched on unexpected data pts: %f, field_no_out: %i, drop: %i, flags: %i, input_pos: %i, current input packet number: %i", 
                pts_itod(m_input_hist[bestmatch].pts_opaque), (int)m_input_hist[bestmatch].field_no_out,
                (int)m_input_hist[bestmatch].drop, m_input_hist[bestmatch].flags, 
                m_input_hist[bestmatch].input_pos, iInputPktNum);
            // if not more than 5 increase in io delay then adjust our maximum to it
            if ((m_iMaxDecoderIODelay < delay) && (m_iMaxDecoderIODelay + 5 >= delay))
            {
-              CLog::Log(LOGDEBUG,"CDVDVideoCodecFFmpeg::SetFrameFlags() decoder history search, increasing max delay to %i", delay); 
+              CLog::Log(LOGDEBUG,"CDVDVideoCodecFFmpeg::SetFrameFlagsFromHist() decoder history search, increasing max delay to %i", delay); 
               m_iMaxDecoderIODelay = delay;
            }
         }
@@ -926,11 +948,14 @@ void CDVDVideoCodecFFmpeg::SetFrameFlagsFromHist(int iInputPktNum)
         // for the gain (ableit much lesser) that will offer
         if (m_input_hist[bestmatch].drop &&
             m_iDecoderDropRequest > 10 * m_iDecoderDrop && m_iDecoderDropRequest > 10)
+{
+CLog::Log(LOGDEBUG,"ASB: CDVDVideoCodecFFmpeg::SetFrameFlagsFromHist() settings m_iFrameFlags DVP_FLAG_DROPPED due to dropping not working m_iDecoderDropRequest: %i m_iDecoderDrop: %i", m_iDecoderDropRequest, m_iDecoderDrop);
            m_iFrameFlags |= DVP_FLAG_DROPPED;
+}
 
      }
      else // we couldn't find our pts!
-        CLog::Log(LOGWARNING,"CDVDVideoCodecFFmpeg::SetFrameFlags() decoder history search could not find a match for pts: %f", pts_itod(picture_pts_opaque));
+        CLog::Log(LOGWARNING,"CDVDVideoCodecFFmpeg::SetFrameFlagsFromHist() decoder history search could not find a match for pts: %f", pts_itod(picture_pts_opaque));
   }
 }
 
@@ -949,6 +974,7 @@ void CDVDVideoCodecFFmpeg::ResetState()
   m_bDropNextRequested = false;
   m_iDecoderDropRequest = 0;
   m_bDecodingStable = false;
+  m_bExpectingDecodedFrame = false;
   m_bInterlacedMode = false;
   m_bFieldInputMode = false;
   m_iFrameFlags = 0;
@@ -956,20 +982,43 @@ void CDVDVideoCodecFFmpeg::ResetState()
   // reset the input history buffer
   for (int i = 0; i < INPUT_HISTBUFNUM; i++)
   {
-      m_input_hist[i].pts_opaque = DVD_NOPTS_VALUE;
-      m_input_hist[i].flags = 0;
-      m_input_hist[i].drop = false;
-      m_input_hist[i].field_no_out = false;
-      m_input_hist[i].input_pos = -1;
+    m_input_hist[i].pts_opaque = DVD_NOPTS_VALUE;
+    m_input_hist[i].flags = 0;
+    m_input_hist[i].drop = false;
+    m_input_hist[i].field_no_out = false;
+    m_input_hist[i].input_pos = -1;
   }
+}
+
+bool CDVDVideoCodecFFmpeg::Reset(bool dispose)
+{
+CLog::Log(LOGDEBUG,"ASB: CDVDVideoCodecFFmpeg::Reset dispose: %i", (int)dispose);
+  Reset();
+
+  bool bResetSuccess = true;
+  // for codecs that do not flush properly (ie buggy) attempt to flush by null packet decode loop
+  // - expect zombie picture error during post Reset() decodes
+  { AVPacket avpkt;
+    avpkt.data = NULL;
+    avpkt.size = 0;
+    int iGotPicture = 0;
+    m_dllAvCodec.avcodec_decode_video2(m_pCodecContext, m_pFrame, &iGotPicture, &avpkt);
+    if (iGotPicture)
+      bResetSuccess = false;
+  }
+  if (!bResetSuccess && dispose)
+  {
+    CLog::Log(LOGNOTICE,"CDVDVideoCodecFFmpeg::Reset reset failed, doing dispose");
+    Dispose();
+  }
+CLog::Log(LOGDEBUG,"ASB: CDVDVideoCodecFFmpeg::Reset bResetSuccess: %i", (int)bResetSuccess);
+  return bResetSuccess;
 }
 
 void CDVDVideoCodecFFmpeg::Reset()
 {
-  m_iLastKeyframe = m_pCodecContext->has_b_frames;
+CLog::Log(LOGDEBUG,"ASB: CDVDVideoCodecFFmpeg::Reset");
   m_dllAvCodec.avcodec_flush_buffers(m_pCodecContext);
-
-  ResetState();
 
   if (m_pHardware)
     m_pHardware->Reset();
@@ -982,6 +1031,10 @@ void CDVDVideoCodecFFmpeg::Reset()
   }
   m_filters = "";
   FilterClose();
+
+  ResetState();
+
+  m_iLastKeyframe = m_pCodecContext->has_b_frames;
 }
 
 bool CDVDVideoCodecFFmpeg::GetPictureCommon(DVDVideoPicture* pDvdVideoPicture)
@@ -995,6 +1048,7 @@ bool CDVDVideoCodecFFmpeg::GetPictureCommon(DVDVideoPicture* pDvdVideoPicture)
     pDvdVideoPicture->iHeight = m_pFilterLink->cur_buf->video->h;
   }
 
+  //TODO: should this comment say decoder rather than demuxer???
   /* crop of 10 pixels if demuxer asked it */
   if(m_pCodecContext->coded_width  && m_pCodecContext->coded_width  < (int)pDvdVideoPicture->iWidth
                                    && m_pCodecContext->coded_width  > (int)pDvdVideoPicture->iWidth  - 10)
@@ -1084,7 +1138,7 @@ bool CDVDVideoCodecFFmpeg::GetPictureCommon(DVDVideoPicture* pDvdVideoPicture)
 
   pDvdVideoPicture->iGroupId = m_iGroupId;
 
-//CLog::Log(LOGDEBUG,"ASB: CDVDVideoCodecFFmpeg::GetPictureCommon pDvdVideoPicture->pts: %f pDvdVideoPicture->iDisplayWidth: %i pDvdVideoPicture->iDisplayHeight: %i", pDvdVideoPicture->pts, (int)pDvdVideoPicture->iDisplayWidth, (int)pDvdVideoPicture->iDisplayHeight);
+CLog::Log(LOGDEBUG,"ASB: CDVDVideoCodecFFmpeg::GetPictureCommon pDvdVideoPicture->pts: %f pDvdVideoPicture->iFlags: %i pDvdVideoPicture->iDisplayWidth: %i pDvdVideoPicture->iDisplayHeight: %i m_started: %i pts_itod(m_pFrame->reordered_opaque): %f", pDvdVideoPicture->pts, pDvdVideoPicture->iFlags, (int)pDvdVideoPicture->iDisplayWidth, (int)pDvdVideoPicture->iDisplayHeight, (int)m_started, pts_itod(m_pFrame->reordered_opaque));
 
   return true;
 }

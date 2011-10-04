@@ -313,7 +313,9 @@ protected:
   std::deque<OutputPicture*> m_freeOutPic;
   std::deque<OutputPicture*> m_usedOutPic;
   std::deque<OutputPicture*> m_presentOutPic;
+  std::deque<OutputPicture*> m_mixerOutPic;
   OutputPicture *m_presentPicture;
+  int m_mixerInputSize; // mixerInput queue size to be protected by m_mixerSec log
   OutputPicture *m_flipBuffer[NUM_RENDERBUF_PICS];
   unsigned int m_mixerCmd;
   CCriticalSection m_mixerSec, m_outPicSec, m_videoSurfaceSec, m_flipSec;

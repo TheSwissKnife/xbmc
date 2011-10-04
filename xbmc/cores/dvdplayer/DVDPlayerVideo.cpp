@@ -281,8 +281,9 @@ void CDVDPlayerVideo::CloseStream(bool bWaitForBuffers)
   if (m_pVideoCodec)
   {
     m_pVideoOutput->Reset(100);
-    m_pVideoCodec->Dispose();
+    g_renderManager.WaitDrained(300);
     m_pVideoOutput->Dispose();
+    m_pVideoCodec->Dispose();
     delete m_pVideoCodec;
     m_pVideoCodec = NULL;
   }
@@ -344,6 +345,8 @@ void CDVDPlayerVideo::Process()
 
   m_videoStats.Start();
   SetRefreshChanging(false);
+  // tell other clock subscribers not to touch the clock for 5 seconds
+  m_pClock->SetVideoIsController(5 * CurrentHostFrequency());
   
   while (!m_bStop)
   {
@@ -393,7 +396,7 @@ void CDVDPlayerVideo::Process()
     CDVDMsg* pMsg;
     MsgQueueReturnCode ret;
 
-//CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo m_messageQueue.Get iQueueTimeOut: %i iPriority: %i", iQueueTimeOut, iPriority);
+CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo m_messageQueue.Get iQueueTimeOut: %i iPriority: %i", iQueueTimeOut, iPriority);
     ret = m_messageQueue.Get(&pMsg, iQueueTimeOut, iPriority);
 
     if (MSGQ_IS_ERROR(ret) || ret == MSGQ_ABORT)
@@ -420,6 +423,7 @@ void CDVDPlayerVideo::Process()
       if ( (speed != DVD_PLAYSPEED_PAUSE || bMustProcessNextFrame) &&
            ((!bFreeDecoderBuffer) || bStreamEOF || (clock - fLastDecodedPictureClock < frametime * 5)) )
       {
+CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo CDVDMsg::GENERAL_NO_CMD speed: %i bMustProcessNextFrame: %i bFreeDecoderBuffer: %i bStreamEOF: %i clock: %f fLastDecodedPictureClock: %f frametime: %f", speed, (int)bMustProcessNextFrame, (int)bFreeDecoderBuffer, (int)bStreamEOF, clock, fLastDecodedPictureClock, frametime);
         pMsg = new CDVDMsg(CDVDMsg::GENERAL_NO_CMD); //pseudo msg to get into decode section
         ret = MSGQ_OK;
       }
@@ -629,7 +633,7 @@ CLog::Log(LOGDEBUG, "CDVDPlayerVideo VC_HINT_HARDDRAIN");
 }
         m_pVideoCodec->SetDropState(bRequestDrop);
         m_pVideoCodec->SetDecoderHint(iDecoderHint);
-//CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo No PACKET Decode bStreamEOF: %i", (int)bStreamEOF);
+CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo No PACKET Decode bStreamEOF: %i", (int)bStreamEOF);
         iDecoderState = m_pVideoCodec->Decode(NULL, 0, DVD_NOPTS_VALUE, DVD_NOPTS_VALUE);
       }
       else
@@ -693,7 +697,7 @@ CLog::Log(LOGDEBUG, "CDVDPlayerVideo VC_HINT_HARDDRAIN");
         // - as that happens after a flush and then defeats the object of having the buffer
         int iConvergeCount = m_pVideoCodec->GetConvergeCount();
 
-//CLog::Log(LOGDEBUG,"ASB: CDVDPlayerVideo::Process about to decode pts: %f drop: %i iDecoderHint: %i", pPacket->pts, (int)bRequestDrop, iDecoderHint);
+CLog::Log(LOGDEBUG,"ASB: CDVDPlayerVideo::Process about to decode pts: %f drop: %i iDecoderHint: %i", pPacket->pts, (int)bRequestDrop, iDecoderHint);
         iDecoderState = m_pVideoCodec->Decode(pPacket->pData, pPacket->iSize, pPacket->dts, pPacket->pts);
         //if (iDecoderState & VC_AGAIN)
         //  CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo iDecoderState: VC_AGAIN");
@@ -740,12 +744,14 @@ CLog::Log(LOGDEBUG, "CDVDPlayerVideo VC_HINT_HARDDRAIN");
 
               m_pullupCorrection.Flush(); //dropped frames mess up the pattern, so just flush it
            }
+CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo m_iDroppedFrames: %i m_iDecoderDroppedFrames: %i m_iDecoderPresentDroppedFrames: %i iDecoderState: %i", m_iDroppedFrames, m_iDecoderDroppedFrames, m_iDecoderPresentDroppedFrames, iDecoderState);
         }
         //for decoders that don't expose dropping info assume dropped if no picture and buffer requested
         else if(bRequestDrop && (iDecoderState & VC_BUFFER) && !(iDecoderState & VC_PICTURE))
         {
           m_iDecoderDroppedFrames++;
           m_iDroppedFrames++;
+CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo non-expose m_iDroppedFrames: %i m_iDecoderDroppedFrames: %i m_iDecoderPresentDroppedFrames: %i iDecoderState: %i", m_iDroppedFrames, m_iDecoderDroppedFrames, m_iDecoderPresentDroppedFrames, iDecoderState);
           FlushPullupCorrection(); //dropped frames mess up the pattern, so just flush it
         }
 
@@ -753,11 +759,22 @@ CLog::Log(LOGDEBUG, "CDVDPlayerVideo VC_HINT_HARDDRAIN");
         // so that it can only be re-enabled by lateness calc or by player drop request
         bRequestDrop = false;
 
-        // if decoder was flushed, we need to seek back again to resume rendering
+        // if decoder was flushed (eg via hardware preemption) or we just requested a resolution change, 
+        // we need to replay our demux packet cache dropping the ones we consider to have displayed
         if (iDecoderState & VC_FLUSHED || bResChange)
         {
+          //res change state should have already cleared down decoder and output
+          if (!bResChange)
+          {
+            CLog::Log(LOGDEBUG, "CDVDPlayerVideo - video decoder was flushed unexpectedly");
+            // tell other clock subscribers not to touch the clock for 10 seconds
+            m_pClock->SetVideoIsController(10 * CurrentHostFrequency());
+            m_pVideoOutput->Reset(100);
+            if (m_pVideoCodec && !m_pVideoCodec->Reset(true))
+              ReOpenVideoCodec();
+          }
 // TODO: pause player, and look to output (not drop) the packet after the one that was last displayed 
-          CLog::Log(LOGDEBUG, "CDVDPlayerVideo - video decoder was flushed");
+          CLog::Log(LOGDEBUG, "CDVDPlayerVideo - replaying deumx packet cache");
           while(!m_packets.empty())
           {
             CDVDMsgDemuxerPacket* msg = (CDVDMsgDemuxerPacket*)m_packets.front().message->Acquire();
@@ -768,20 +785,15 @@ CLog::Log(LOGDEBUG, "CDVDPlayerVideo VC_HINT_HARDDRAIN");
             msg->m_drop = !m_packets.empty() || (iPriority > 0 && bPacketDrop);
             m_messageQueue.Put(msg, iPriority + 10);
           }
-
-          m_pVideoOutput->Reset(100);
-          m_pVideoCodec->Reset();
-          CLog::Log(LOGNOTICE, "-------------------- video flushed");
           m_packets.clear();
           break;
         }
 
-        //TODO: what to do on error?
+        //TODO: what to do on error (I guess if we have a large number in a row we should try to recover via reset)?
         // if decoder had an error, tell it to reset to avoid more problems 
         if (iDecoderState & VC_ERROR)
         {
           CLog::Log(LOGDEBUG, "CDVDPlayerVideo - video decoder returned error");
-
           break;
         }
 
@@ -831,7 +843,7 @@ CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo hurry up fLastDecodedPictureClock: %f 
                 m_iNrOfPicturesNotToSkip--;
           }
           // send the picture event message to output thread
-//CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo m_pVideoOutput->SendMessage VC_PICTURE toMsg.bDrop: %i", (int)toMsg.bDrop);
+CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo m_pVideoOutput->SendMessage VC_PICTURE toMsg.bDrop: %i", (int)toMsg.bDrop);
 
           bMsgSent = m_pVideoOutput->SendMessage(toMsg);
           if (!bMsgSent)
@@ -873,11 +885,6 @@ CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo hurry up fLastDecodedPictureClock: %f 
 
            if(iResult & EOS_CONFIGURE)
            {
-             // drain render buffers
-             //while (!g_renderManager.Drain())
-             //{
-             //   Sleep(10);
-             //}
 
              //TODO: move the reconfigure to a function to reduce clutter (should return 3 possible states, reschange, noreschange, error)
              std::string formatstr;
@@ -890,34 +897,34 @@ CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo hurry up fLastDecodedPictureClock: %f 
 
              // check if resolution is going to change and clear down
              // resources in this case
-             //bResChange = g_renderManager.CheckResolutionChange(m_bFpsInvalid ? 0.0 : m_output.framerate);
              bResChange = g_renderManager.CheckResolutionChange(bFpsInvalid ? 0.0 : outputFormat.framerate);
              if (bResChange)
              {
+                m_pVideoCodec->DiscardPicture(); //the picture will not have been discarded by output
+                // tell other clock subscribers not to touch the clock for 10 seconds
+                m_pClock->SetVideoIsController(10 * CurrentHostFrequency());
+                //TODO: not sensible to call this a drop, as we know we should start playback from this picture 
                 m_pVideoOutput->Reset(100);
                 m_pVideoOutput->Dispose();
-                m_pVideoCodec->HwFreeResources();
+                g_renderManager.WaitDrained(300);
+                if (m_pVideoCodec->Reset(true))
+                  m_pVideoCodec->HwFreeResources();
+                else
+                {
+                  delete m_pVideoCodec;
+                  m_pVideoCodec = NULL;
+                }
                 CLog::Log(LOGNOTICE,"CDVDPlayerVideo::Process - freed hw resources");
+                CLog::Log(LOGNOTICE,"CDVDPlayerVideo::Process done m_pVideoCodec->Reset()");
                 g_application.m_pPlayer->PauseRefreshChanging();
                 SetRefreshChanging(true);
              }
 
-             //CLog::Log(LOGDEBUG,"%s - change configuration. %dx%d. framerate: %4.2f. format: %s",__FUNCTION__,
-             //                                                       m_output.width,
-             //                                                       m_output.height,
-             //                                                       m_bFpsInvalid ? 0.0 : m_output.framerate,
-             //                                                       m_formatstr.c_str());
              CLog::Log(LOGDEBUG,"%s - change configuration. %dx%d. framerate: %4.2f. format: %s",__FUNCTION__,
                                                                     outputFormat.width,
                                                                     outputFormat.height,
                                                                     bFpsInvalid ? 0.0 : outputFormat.framerate,
                                                                     formatstr.c_str());
-             //if(!g_renderManager.Configure(m_output.width,
-             //                               m_output.height,
-             //                               m_output.dwidth,
-             //                               m_output.dheight,
-             //                               m_bFpsInvalid ? 0.0 : m_output.framerate,
-             //                               m_output.flags))
              if(!g_renderManager.Configure(outputFormat.width,
                                             outputFormat.height,
                                             outputFormat.dwidth,
@@ -928,7 +935,6 @@ CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo hurry up fLastDecodedPictureClock: %f 
                CLog::Log(LOGERROR, "%s - failed to configure renderer", __FUNCTION__);
                //TODO: what should we do now?
              }
-             //lock.Leave();
 
              if (bResChange)
              {
@@ -964,6 +970,7 @@ CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo hurry up fLastDecodedPictureClock: %f 
            {
               m_iDroppedFrames++;
               m_iOutputDroppedFrames++;
+CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo m_iDroppedFrames: %i m_iOutputDroppedFrames: %i", m_iDroppedFrames, m_iOutputDroppedFrames);
            }
         }
 
@@ -974,7 +981,7 @@ CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo hurry up fLastDecodedPictureClock: %f 
         if (!m_pVideoCodec->WaitForFreeBuffer())
         {
           bFreeDecoderBuffer = false;
-//CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo NO DECODER BUFFER");
+CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo NO DECODER BUFFER");
           break;
         }
         else
@@ -1023,6 +1030,7 @@ CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo hurry up fLastDecodedPictureClock: %f 
                  {
                     m_iDroppedFrames++;
                     m_iOutputDroppedFrames++;
+CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo m_iDroppedFrames: %i m_iOutputDroppedFrames: %i", m_iDroppedFrames, m_iOutputDroppedFrames);
                  }
                  if (iResult & EOS_QUIESCED)
                     break;
@@ -1589,8 +1597,32 @@ bool CDVDPlayerVideo::GetRefreshChanging()
   return m_output.refreshChanging;
 }
 
+void CDVDPlayerVideo::ReOpenVideoCodec()
+{
+  // assumes a video codec Dispose has been performed
+  if (m_pVideoCodec)
+  {
+    delete m_pVideoCodec;
+    m_pVideoCodec = NULL;
+  }
+  //re-open using previously established hints
+  CDVDVideoCodec* codec = CDVDFactoryCodec::CreateVideoCodec(m_hints);
+  m_pVideoCodec = codec;
+  m_pVideoOutput->SetCodec(codec);
+  m_started = false;
+CLog::Log(LOGDEBUG, "CDVDPlayerVideo::ReOpenVideoCodec m_pVideoCodec: %u", (unsigned int)m_pVideoCodec);
+}
+
 void CDVDPlayerVideo::ResumeAfterRefreshChange()
 {
+  if (!m_pVideoCodec)
+  {
+     ReOpenVideoCodec();
+  }
+  if (!g_VideoReferenceClock.WaitStable(3000))
+    CLog::Log(LOGDEBUG, "CDVDPlayerVideo::ResumeAfterRefreshChange g_VideoReferenceClock didn't reach stable in 2s, continuing anyway");
+CLog::Log(LOGDEBUG, "ASB: g_VideoReferenceClock WaitStable done");
+
   SetRefreshChanging(false);
 
 //TODO: surely we should set previous speed - not just normal speed?
@@ -1942,7 +1974,7 @@ int CDVDPlayerVideo::OutputPicture(const DVDVideoPicture* src, double pts, int p
 
   int result = 0;
 
-//CLog::Log(LOGDEBUG,"ASB: CDVDPlayerVideo::OutputPicture pts: %f", pts);
+CLog::Log(LOGDEBUG,"ASB: CDVDPlayerVideo::OutputPicture pts: %f", pts);
 
   if (pPicture->iFlags & DVP_FLAG_DROPPED)
   {
@@ -2019,7 +2051,7 @@ int CDVDPlayerVideo::OutputPicture(const DVDVideoPicture* src, double pts, int p
     return EOS_DROPPED;
   }
 
-//CLog::Log(LOGDEBUG,"ASB: OutputPicture About to AddVideoPicture tickClock: %f fPlayingClock: %f fPresentClock: %f fClockSleep: %f fCurrentClock: %f playSpeed: %i pts: %f prevPlaySpeed: %i, resync: %i", m_pClock->GetClock(false), fPlayingClock, fPresentClock, fClockSleep, fCurrentClock, playSpeed, pts, prevPlaySpeed, (int)resync);
+CLog::Log(LOGDEBUG,"ASB: OutputPicture About to AddVideoPicture tickClock: %f fPlayingClock: %f fPresentClock: %f fClockSleep: %f fCurrentClock: %f playSpeed: %i pts: %f prevPlaySpeed: %i, resync: %i", m_pClock->GetClock(false), fPlayingClock, fPresentClock, fClockSleep, fCurrentClock, playSpeed, pts, prevPlaySpeed, (int)resync);
   index = g_renderManager.AddVideoPicture(*pPicture, pts, fPresentClock, playSpeed, resync);
 
   // try repeatedly for 0.5 sec to add again if it failed for some reason

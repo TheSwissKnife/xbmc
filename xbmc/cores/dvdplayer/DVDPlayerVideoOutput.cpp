@@ -310,23 +310,23 @@ bool CDVDPlayerVideoOutput::ResyncClockToVideo(double pts, int playerSpeed, bool
          //maxTickAdjustOffer is number of ticks forward other subscribers can move the clock
          //adjustOfferExpirySys is system time when the offer expires
          //controlDurSys is how long we wish to be the clock controller (clock will remove control after this elapsed sys time
-         int64_t controlDurSys = 5 * CurrentHostFrequency(); //5 seconds
+         int64_t controlDurSys = 10 * CurrentHostFrequency(); //10 seconds
          int maxTickAdjustOffer = 2;
          int64_t adjustOfferExpirySys = (sleepMs - 5) * CurrentHostFrequency() / 1000; 
 
          m_pClock->SetVideoIsController(controlDurSys, maxTickAdjustOffer, adjustOfferExpirySys);
-//CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideoOutput::ResyncClockToVideo doing SYNC SetVideoIsController for pts: %f with prepTime: %i, displayDelay: %f displaySignalToViewDelay: %f tickInterval: %f clockPrime: %f sleepMs: %i", pts, prepTime, displayDelay, displaySignalToViewDelay, tickInterval, clockPrime, sleepMs);
+CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideoOutput::ResyncClockToVideo doing SYNC SetVideoIsController for pts: %f with prepTime: %i, displayDelay: %f displaySignalToViewDelay: %f tickInterval: %f clockPrime: %f sleepMs: %i", pts, prepTime, displayDelay, displaySignalToViewDelay, tickInterval, clockPrime, sleepMs);
       }
 
-//CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideoOutput::ResyncClockToVideo pre SetCurrentTickClock GetClock: %f", m_pClock->GetClock(false));
+CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideoOutput::ResyncClockToVideo pre SetCurrentTickClock GetClock: %f", m_pClock->GetClock(false));
       m_pClock->SetCurrentTickClock(pts - (playerSpeed / DVD_PLAYSPEED_NORMAL) * clockPrime);
-//CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideoOutput::ResyncClockToVideo done SetCurrentTickClock GetClock: %f", m_pClock->GetClock(false));
+CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideoOutput::ResyncClockToVideo done SetCurrentTickClock GetClock: %f", m_pClock->GetClock(false));
 
       if (playerSpeed != DVD_PLAYSPEED_PAUSE)
       {
          //TODO: perhaps do sleep in small steps to monitor the clock progress
          Sleep(sleepMs);
-//CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideoOutput::ResyncClockToVideo done Sleep GetClock: %f", m_pClock->GetClock(false));
+CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideoOutput::ResyncClockToVideo done Sleep GetClock: %f", m_pClock->GetClock(false));
       }
       return true;
    }
@@ -376,7 +376,7 @@ void CDVDPlayerVideoOutput::Process()
       m_state = VO_STATE_WAITINGPLAYERSTART;
       SetRendererConfiguring(false);
       SetResetting(false);
-//CLog::Log(LOGDEBUG,"ASB: CDVDPlayerVideoOutput::Process FINISHED RESET");
+CLog::Log(LOGDEBUG,"ASB: CDVDPlayerVideoOutput::Process FINISHED RESET");
     }
 
     // always init that we are not outputting or dropping at start of each loop
@@ -431,7 +431,7 @@ void CDVDPlayerVideoOutput::Process()
       // NOTE: come out of VO_STATE_WAITINGPLAYERSTART when toMsg.bPlayerStarted and playerSpeed not pause 
       //       but move back only when not toMsg.bPlayerStarted 
 
-//CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideoOutput::Process bPicDrop: %i bPlayerStarted: %i playerSpeed: %i interval: %f m_state: %i msgCmd: %i", (int)bPicDrop, (int)bPlayerStarted, playerSpeed, interval, (int)m_state, (int)msgCmd);
+CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideoOutput::Process bPicDrop: %i bPlayerStarted: %i playerSpeed: %i interval: %f m_state: %i msgCmd: %i", (int)bPicDrop, (int)bPlayerStarted, playerSpeed, interval, (int)m_state, (int)msgCmd);
    
 
       if (m_state == VO_STATE_WAITINGPLAYERSTART && 
@@ -468,7 +468,7 @@ void CDVDPlayerVideoOutput::Process()
       {
           // only real use at present is to sync clock to a better approximation than what dvd player might have done
           // - but during overlay only mode it could also be used to perhaps handle overlay timing better (TODO)
-//CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideoOutput::Process Got msgCmd == VOCMD_SPEEDCHANGE playerSpeed: %i", playerSpeed);
+CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideoOutput::Process Got msgCmd == VOCMD_SPEEDCHANGE playerSpeed: %i", playerSpeed);
           if (playerSpeed == DVD_PLAYSPEED_PAUSE)
           {
              // pretend we output at this speed as likely no pic msg will be given to us at this speed
@@ -576,7 +576,7 @@ void CDVDPlayerVideoOutput::Process()
 
       if (bOutPic)
       {
-//CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideoOutput::Process pts: %f playerSpeed: %i prevOutputSpeed: %i bOutputEarly: %i", pts, playerSpeed, prevOutputSpeed, (int)bOutputEarly);
+CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideoOutput::Process pts: %f playerSpeed: %i prevOutputSpeed: %i bOutputEarly: %i", pts, playerSpeed, prevOutputSpeed, (int)bOutputEarly);
          outPicResult = m_pVideoPlayer->OutputPicture(&m_picture, pts + videoDelay, playerSpeed, 
                                                        prevOutputSpeed, bOutputEarly, bResync);
          if (!(outPicResult & (EOS_DROPPED | EOS_ABORT)) && (m_state == VO_STATE_WAITINGPLAYERSTART))
@@ -682,7 +682,7 @@ bool CDVDPlayerVideoOutput::GetPicture(double& pts, double& frametime, bool drop
 
     //TODO: store untouched pts and dts values in ring buffer of say 20 entries to allow decoder flush to make a better job of starting from correct place
 
-//CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideoOutput::GetPicture pts: %f", m_picture.pts);
+CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideoOutput::GetPicture pts: %f", m_picture.pts);
     // validate picture timing,
     // if both pts invalid, use pts calculated from previous pts and iDuration
     // if still invalid use dts, else use picture.pts as passed

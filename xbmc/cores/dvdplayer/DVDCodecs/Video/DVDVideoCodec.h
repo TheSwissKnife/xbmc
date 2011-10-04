@@ -187,9 +187,15 @@ public:
 
  /*
    * Reset the decoder.
-   * Should be the same as calling Dispose and Open after each other
+   * Should give similar effect as calling Dispose and Open after each other
    */
   virtual void Reset() = 0;
+  // optional version that returns whether reset was successful and can optionally finish with a dispose if reset failed 
+  virtual bool Reset(bool dispose) 
+  {
+    Reset();
+    return true;
+  }
 
   /*
    * returns true if successfull
