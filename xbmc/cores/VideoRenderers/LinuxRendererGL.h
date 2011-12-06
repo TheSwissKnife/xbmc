@@ -138,6 +138,8 @@ public:
   virtual bool         HasFreeBuffer();
   virtual int          FlipFreeBuffer();
   virtual int          GetNextRenderBufferIndex();
+  virtual void         SetDrain(bool enable = true) { m_bDrain = enable; };
+  virtual bool         Drained(){ return m_bAllRenderBuffersFree; };
   virtual void         ReleaseProcessor();
   virtual void         LogBuffers();
 
@@ -216,18 +218,21 @@ protected:
 
   // Render Buffer State Description:
   //
-  // Output:      is the buffer about to or having its texture prepared for render (ie from output thread).
+  // Output:      the buffer about to or having its texture prepared for render (ie from output thread).
   //              Cannot go past the "Displayed" buffer (otherwise we will probably overwrite buffers not yet
-  //              displayed or even rendered).
-  // Current:     is the current buffer being or having been submitted for render to back buffer.
+  //              displayed or even rendered).  We also choose to prevent this overwriting current render buffer
+  //              so that we can re-render for cases that require it, such as to overwrite previous overlay renders.
+  //              Thus we do not go beyond a "Free" buffer.
+  // Current:     the current buffer being or having been submitted for render to back buffer.
   //              Cannot go past "Output" buffer (else it would be rendering old output).
-  // FlipRequest: is the render buffer that has last been submitted for render AND importantly has had 
+  // FlipRequest: the render buffer that has last been submitted for render AND importantly has had 
   //              swap-buffer flip subsequently invoked (thus flip to front buffer is requested for vblank
   //              subsequent to render completion).
-  // Displayed:   is the buffer that is now considered to be safely copied from back buffer to front buffer 
+  // Displayed:   the buffer that is now considered to be safely copied from back buffer to front buffer 
   //              (we assume that after two swap-buffer flips for the same "Current" render buffer that that 
   //              buffer will be safe, but otherwise we consider that only the previous-to-"Current" is guaranteed).
-  // Last:        is the last buffer successfully submitted for render to back buffer (purpose: to rollback to in 
+  // Free:        the last buffer we have freed after making sure it had displayed, and we have no further use for it.
+  // Last:        the last buffer successfully submitted for render to back buffer (purpose: to rollback to in 
   //              unexpected case where a texture render fails).
 
   int m_iCurrentRenderBuffer;
@@ -236,8 +241,10 @@ protected:
   int m_iFlipRequestRenderBuffer;
   int m_iOutputRenderBuffer;
   int m_iDisplayedRenderBuffer;
-  bool m_bAllRenderBuffersDisplayed;
+  int m_iFreeRenderBuffer;
+  bool m_bAllRenderBuffersFree;
   bool m_bAllRenderBuffersOutput;
+  bool m_bDrain;
 
   bool m_bConfigured;
   bool m_bValidated;

@@ -85,14 +85,24 @@ public:
   void UpdateDisplayInfo();
   unsigned int PreInit();
   void UnInit();
-  bool WaitDrained(int timeout = 100);
+  bool WaitDrained(int timeout = 500);
   bool CheckResolutionChange(float fps);
 
   void AddOverlay(CDVDOverlay* o, double pts)
   {
     CSharedLock lock(m_sharedSection);
-//    m_requestOverlayFlip = true;
+//TODO: fix later as render thread should only flip to next overlay based on an overlay pts-to-clock presentation time for that next overlay - else just keep rendering the current unless an end presentation has expired, while output thread should only add/clear down when overlay change/removal required etc
+    m_iOverlayAdd++;
     m_overlays.AddOverlay(o, pts);
+  }
+
+  int OverlayFlipRender()
+  {
+    CSharedLock lock(m_sharedSection);
+    if (m_iOverlayAdd == m_iOverlayRender)
+      return -1;
+    m_iOverlayRender++;
+    return m_overlays.FlipRender();
   }
 
   int OverlayFlipOutput()
@@ -240,10 +250,8 @@ protected:
   CEvent     m_presentevent;
   CEvent     m_flipEvent;
   int       m_missedTickWait;
-//  CDVDClock  *m_pClock;
-//  bool       m_late;
-//  bool       m_bDrain;
-//  bool       m_requestOverlayFlip;
+  int       m_iOverlayAdd;
+  int       m_iOverlayRender;
 
   OVERLAY::CRenderer m_overlays;
 

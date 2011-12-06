@@ -60,12 +60,14 @@ COverlay::~COverlay()
 
 COverlay* COverlay::Acquire()
 {
+CLog::Log(LOGDEBUG, "ASB: COverlay::Acquire start");
   AtomicIncrement(&m_references);
   return this;
 }
 
 long COverlay::Release()
 {
+CLog::Log(LOGDEBUG, "ASB: COverlay::Release start");
   long count = AtomicDecrement(&m_references);
   if (count == 0)
     delete this;
@@ -75,6 +77,7 @@ long COverlay::Release()
 
 long COverlayMainThread::Release()
 {
+CLog::Log(LOGDEBUG, "ASB: COverlayMainThread::Release start");
   long count = AtomicDecrement(&m_references);
   if (count == 0)
   {
@@ -89,14 +92,16 @@ long COverlayMainThread::Release()
 
 CRenderer::CRenderer()
 {
-  m_render = 0;
-  m_decode = 0;
-  m_displayedrender = 0;
-  m_lastdisplayedrender = -1;
+CLog::Log(LOGDEBUG, "ASB: CRenderer::CRenderer start");
+  m_render = -1;
+  m_decode = -1;
+  m_displayedrender = -1;
+  //m_lastdisplayedrender = -1;
 }
 
 CRenderer::~CRenderer()
 {
+CLog::Log(LOGDEBUG, "ASB: CRenderer::~CRenderer start");
   for(int i = 0; i < NUM_OVERLAYBUFFERS; i++)
     Release(m_buffers[i]);
 }
@@ -105,6 +110,7 @@ void CRenderer::AddOverlay(CDVDOverlay* o, double pts)
 {
   CSingleLock lock(m_section);
 
+CLog::Log(LOGDEBUG, "ASB: CRenderer::AddOverlay CDVDOverlay start m_decode: %i pts: %f", m_decode, pts);
   SElement   e;
   e.pts = pts;
   if(o->m_overlay)
@@ -117,6 +123,7 @@ void CRenderer::AddOverlay(CDVDOverlay* o, double pts)
 void CRenderer::AddOverlay(COverlay* o, double pts)
 {
   CSingleLock lock(m_section);
+CLog::Log(LOGDEBUG, "ASB: CRenderer::AddOverlay COverlay start m_decode: %i pts: %f", m_decode, pts);
   SElement   e;
   e.pts = pts;
   e.overlay = o->Acquire();
@@ -126,11 +133,13 @@ void CRenderer::AddOverlay(COverlay* o, double pts)
 void CRenderer::AddCleanup(COverlay* o)
 {
   CSingleLock lock(m_section);
+CLog::Log(LOGDEBUG, "ASB: CRenderer::AddCleanup start");
   m_cleanup.push_back(o->Acquire());
 }
 
 void CRenderer::Release(SElementV& list)
 {
+CLog::Log(LOGDEBUG, "ASB: CRenderer::Release SElementV start");
   SElementV l = list;
   list.clear();
 
@@ -145,6 +154,7 @@ void CRenderer::Release(SElementV& list)
 
 void CRenderer::Release(COverlayV& list)
 {
+CLog::Log(LOGDEBUG, "ASB: CRenderer::Release COverlayV start");
   COverlayV l = list;
   list.clear();
 
@@ -155,6 +165,8 @@ void CRenderer::Release(COverlayV& list)
 void CRenderer::Flush()
 {
   CSingleLock lock(m_section);
+
+CLog::Log(LOGDEBUG, "ASB: CRenderer::Flush start");
 
   for(int i = 0; i < NUM_OVERLAYBUFFERS; i++)
     Release(m_buffers[i]);
@@ -176,9 +188,12 @@ int CRenderer::FlipRender()
 {
   CSingleLock lock(m_section);
 
+CLog::Log(LOGDEBUG, "ASB: CRenderer::FlipRender start m_render: %i", m_render);
+
   if (m_render == m_decode)
      return -1;
   m_render = (m_render + 1) % NUM_OVERLAYBUFFERS;
+CLog::Log(LOGDEBUG, "ASB: CRenderer::FlipRender finish m_render: %i", m_render);
   return m_render;
 }
 
@@ -186,25 +201,40 @@ void CRenderer::NotifyDisplayFlip()
 {
   CSingleLock lock(m_section);
 
-  int last = m_displayedrender;
-  m_displayedrender = (m_render - 1 + NUM_OVERLAYBUFFERS) % NUM_OVERLAYBUFFERS;
-  if (m_displayedrender == last)
-     m_displayedrender = m_render;
-  m_lastdisplayedrender = last;
+CLog::Log(LOGDEBUG, "ASB: CRenderer::NotifyDisplayFlip start m_displayedrender: %i", m_displayedrender);
+  if (m_render != -1)
+  {
+    int last = m_displayedrender;
+    m_displayedrender = (m_render - 1 + NUM_OVERLAYBUFFERS) % NUM_OVERLAYBUFFERS;
+    if (m_displayedrender != -1 && last != m_displayedrender)
+{
+CLog::Log(LOGDEBUG, "ASB: CRenderer::Release(m_buffers) m_displayedrender: %i m_render: %i", m_displayedrender, m_render);
+    Release(m_buffers[m_displayedrender]);
+}
+  //if (m_displayedrender == last)
+     //m_displayedrender = m_render;
+  //m_lastdisplayedrender = last;
+  }
+CLog::Log(LOGDEBUG, "ASB: CRenderer::NotifyDisplayFlip finish m_displayedrender: %i", m_displayedrender);
 }
 
 int CRenderer::FlipOutput()
 {
   CSingleLock lock(m_section);
 
+CLog::Log(LOGDEBUG, "ASB: CRenderer::FlipOutput start m_decode: %i", m_decode);
 //  m_render = m_decode;
 //  m_decode =(m_decode + 1) % 3;
 
-  if (m_decode == m_displayedrender && m_render != m_displayedrender)
+  //if (m_decode == m_displayedrender && m_render != m_displayedrender)
+  if ( (m_decode == m_displayedrender && m_decode != -1) || 
+       (m_decode == NUM_OVERLAYBUFFERS - 1 && m_displayedrender == -1) )
      return -1;
   m_decode = (m_decode + 1) % NUM_OVERLAYBUFFERS;
 
-  Release(m_buffers[m_decode]);
+//CLog::Log(LOGDEBUG, "ASB: CRenderer::FlipOutput Release(m_buffers) m_decode: %i", m_decode);
+  //Release(m_buffers[m_decode]);
+CLog::Log(LOGDEBUG, "ASB: CRenderer::FlipOutput finish m_decode: %i", m_decode);
   return m_decode;
 }
 
@@ -212,8 +242,11 @@ void CRenderer::Render()
 {
   CSingleLock lock(m_section);
 
+CLog::Log(LOGDEBUG, "ASB: CRenderer::Render start m_render: %i", m_render);
   Release(m_cleanup);
 
+  if (m_render == -1)
+    return;
   SElementV& list = m_buffers[m_render];
   for(SElementV::iterator it = list.begin(); it != list.end(); it++)
   {
@@ -225,6 +258,7 @@ void CRenderer::Render()
     if(!o)
       continue;
 
+CLog::Log(LOGDEBUG, "ASB: CRenderer::Render SElementV::iterator m_render: %i it->pts: %f", m_render, it->pts);
     Render(o);
   }
 }

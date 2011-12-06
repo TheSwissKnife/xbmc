@@ -281,7 +281,7 @@ void CDVDPlayerVideo::CloseStream(bool bWaitForBuffers)
   if (m_pVideoCodec)
   {
     m_pVideoOutput->Reset(100);
-    g_renderManager.WaitDrained(300);
+    g_renderManager.WaitDrained(500);
     m_pVideoOutput->Dispose();
     m_pVideoCodec->Dispose();
     delete m_pVideoCodec;
@@ -532,6 +532,7 @@ CLog::Log(LOGDEBUG, "CDVDPlayerVideo CDVDMsg::GENERAL_RESET");
         m_pVideoCodec->Reset();
       }
       m_packets.clear();
+      ResetDropInfo();
       m_started = false;
     }
     else if (pMsg->IsType(CDVDMsg::GENERAL_FLUSH)) // private message sent by (CDVDPlayerVideo::Flush())
@@ -544,10 +545,15 @@ CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo FLUSH m_pVideoCodec->Reset");
         m_pVideoCodec->Reset();
       }
       m_packets.clear();
+      //TODO: I think this drain might not be correct re it may cause hardware clear down...but we do need a way to be sure 
+      // we have cleared out old stuff
+      g_renderManager.WaitDrained(500);
 
       FlushPullupCorrection();
       //we need to recalculate the framerate
       //TODO: this needs to be set on a streamchange instead
+      //ASB: the above TODO seems incorrect to me...it is correct to reset frame rate calc for multirate streams
+      // though it raises the question about how frame rate calc settles in general
       ResetFrameRateCalc();
 
       m_stalled = true;
@@ -655,7 +661,9 @@ CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo No PACKET Decode bStreamEOF: %i", (int
           m_iNrOfPicturesNotToSkip = 5;
         }
 
-        iDropDirective = CalcDropRequirement();
+        if (m_started)
+          iDropDirective = CalcDropRequirement();
+        
         if (bPacketDrop)
           iDecoderHint |= VC_HINT_NOPRESENT;
         if (iDropDirective & DC_SUBTLE)
@@ -783,6 +791,9 @@ CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo non-expose m_iDroppedFrames: %i m_iDec
             // all packets except the last one should be dropped
             // if prio packets and current packet should be dropped, this is likely a new reset
             msg->m_drop = !m_packets.empty() || (iPriority > 0 && bPacketDrop);
+        DemuxPacket* pPacket;
+        pPacket = ((CDVDMsgDemuxerPacket*)msg)->GetPacket();
+CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo m_messageQueue.Put msg->m_drop: %i iPriority: %i bPacketDrop: %i pPacket->pts: %f", (int)msg->m_drop, iPriority, (int)bPacketDrop, pPacket->pts);
             m_messageQueue.Put(msg, iPriority + 10);
           }
           m_packets.clear();
@@ -843,7 +854,7 @@ CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo hurry up fLastDecodedPictureClock: %f 
                 m_iNrOfPicturesNotToSkip--;
           }
           // send the picture event message to output thread
-CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo m_pVideoOutput->SendMessage VC_PICTURE toMsg.bDrop: %i", (int)toMsg.bDrop);
+CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo m_pVideoOutput->SendMessage VC_PICTURE toMsg.bDrop: %i, m_started: %i", (int)toMsg.bDrop, (int)m_started);
 
           bMsgSent = m_pVideoOutput->SendMessage(toMsg);
           if (!bMsgSent)
@@ -900,13 +911,15 @@ CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo m_pVideoOutput->SendMessage VC_PICTURE
              bResChange = g_renderManager.CheckResolutionChange(bFpsInvalid ? 0.0 : outputFormat.framerate);
              if (bResChange)
              {
-                m_pVideoCodec->DiscardPicture(); //the picture will not have been discarded by output
                 // tell other clock subscribers not to touch the clock for 10 seconds
                 m_pClock->SetVideoIsController(10 * CurrentHostFrequency());
-                //TODO: not sensible to call this a drop, as we know we should start playback from this picture 
+                m_pVideoCodec->DiscardPicture(); //the picture will not have been discarded by output
+                // tell application to re-render to force both front and back buffer to same content to ensure that swap buffers can occur without showing old pic
+                g_application.NewFrame();
+                //TODO: not sensible to call this a drop, as mentioned elsewhere we should restart playback from this picture 
                 m_pVideoOutput->Reset(100);
+                g_renderManager.WaitDrained(500);
                 m_pVideoOutput->Dispose();
-                g_renderManager.WaitDrained(300);
                 if (m_pVideoCodec->Reset(true))
                   m_pVideoCodec->HwFreeResources();
                 else
@@ -918,6 +931,7 @@ CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo m_pVideoOutput->SendMessage VC_PICTURE
                 CLog::Log(LOGNOTICE,"CDVDPlayerVideo::Process done m_pVideoCodec->Reset()");
                 g_application.m_pPlayer->PauseRefreshChanging();
                 SetRefreshChanging(true);
+                m_started = false; //best to change state to no longer started
              }
 
              CLog::Log(LOGDEBUG,"%s - change configuration. %dx%d. framerate: %4.2f. format: %s",__FUNCTION__,
@@ -962,6 +976,7 @@ CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo m_pVideoOutput->SendMessage VC_PICTURE
            {
               m_codecname = m_pVideoCodec->GetName();
               m_started = true;
+              ResetDropInfo();
               fStartedClock = CDVDClock::GetAbsoluteClock(true);
               m_messageParent.Put(new CDVDMsgInt(CDVDMsg::PLAYER_STARTED, DVDPLAYER_VIDEO));
            }
@@ -1040,7 +1055,7 @@ CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideo m_iDroppedFrames: %i m_iOutputDroppedF
                  CLog::Log(LOGWARNING, "CDVDPlayerVideo - Did not recieve QUIESCED message from output thread");
            }
            // now drain render buffers
-           g_renderManager.WaitDrained(300);
+           g_renderManager.WaitDrained(500);
 	   CLog::Log(LOGNOTICE, "CDVDPlayerVideo - Finished stream");
            bStreamEOF = false;
         }
@@ -1728,8 +1743,6 @@ int CDVDPlayerVideo::ProcessOverlays(DVDVideoPicture* pSource, double pts, doubl
     VecOverlays* pVecOverlays = m_pOverlayContainer->GetOverlays();
     VecOverlaysIter it = pVecOverlays->begin();
 
-    if (render == OVERLAY_GPU && g_renderManager.OverlayFlipOutput() == -1)
-        return -1; 
     //Check all overlays and render those that should be rendered, based on time and forced
     //Both forced and subs should check timeing, pts == 0 in the stillframe case
     bool flipped = false;
@@ -1748,12 +1761,16 @@ int CDVDPlayerVideo::ProcessOverlays(DVDVideoPicture* pSource, double pts, doubl
       {
         if (render == OVERLAY_GPU)
         {
-          //if (!flipped)
-          //{
-          //   if (g_renderManager.OverlayFlipOutput() == -1)
-          //      return -1; 
-          //   flipped = true;
-          //}
+          if (!flipped)
+          {
+             if (g_renderManager.OverlayFlipOutput() == -1)
+             {
+                CLog::Log(LOGWARNING,"CDVDPlayerVideo::ProcessOverlays failed to flip overlay output buffer");
+                return -1; 
+             }
+             flipped = true;
+          }
+CLog::Log(LOGDEBUG,"ASB: CDVDPlayerVideo::ProcessOverlays pts2: %f pOverlay->iPTSStartTime: %f pOverlay->iPTSStopTime: %f pVecOverlays->size(): %i, m_bRenderSubs: %i pOverlay->bForced: %i", pts2, pOverlay->iPTSStartTime, pOverlay->iPTSStopTime, pVecOverlays->size(), (int)m_bRenderSubs, (int)pOverlay->bForced);
           g_renderManager.AddOverlay(pOverlay, pts2);
         }     
 
@@ -2409,5 +2426,6 @@ bool CDVDPlayerVideo::CalcFrameRate(double& FrameRate) //return true if calculat
     m_fStableFrameRate = 0.0;
     m_iFrameRateCount = 0;
   }
+CLog::Log(LOGDEBUG,"ASB: %s m_fFrameRate: %f m_fStableFrameRate: %f m_iFrameRateCount: %i m_bAllowDrop: %i", __FUNCTION__, m_fFrameRate, m_fStableFrameRate, m_iFrameRateCount, (int)m_bAllowDrop);
   return bChanged;
 }

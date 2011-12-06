@@ -585,8 +585,9 @@ CLog::Log(LOGDEBUG, "ASB: CDVDPlayerVideoOutput::Process pts: %f playerSpeed: %i
          }
       }
       prevOutputSpeed = playerSpeed;  //update our previous playspeed only when actually outputting
-      //provided we did not get a bad status from output of pic and outp of overlay then signal new frame to application
-      if (!(outPicResult & (EOS_CONFIGURE | EOS_DROPPED | EOS_ABORT)) || (outOverlayResult != -1) )
+      //provided we did not get a bad status from output of pic and output of overlay then signal new frame to application
+      //if (!(outPicResult & (EOS_CONFIGURE | EOS_DROPPED | EOS_ABORT)) || (outOverlayResult != -1) )
+      if (!(outPicResult & (EOS_DROPPED | EOS_ABORT)) || (outOverlayResult != -1) )
       {
         // signal new frame to application
         g_application.NewFrame();

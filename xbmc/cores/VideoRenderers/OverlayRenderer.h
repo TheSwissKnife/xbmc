@@ -32,7 +32,12 @@ class CDVDOverlayImage;
 class CDVDOverlaySpu;
 class CDVDOverlaySSA;
 
-#define NUM_OVERLAYBUFFERS 4
+// 3 buffers seems good choice (1 for output 1 for render (persistent post render) and 
+// 1 for flip transition for output to next render: this should ensure no blocking/skipping etc)
+// - but note this will create a time sync delta from video if the number of render buffers is different
+// TODO: expose the delta between overlay buffers and render buffers (implementation dependant) for overlay pts offset
+
+#define NUM_OVERLAYBUFFERS 3
 
 namespace OVERLAY {
 

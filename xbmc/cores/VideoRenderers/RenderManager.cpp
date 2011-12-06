@@ -351,8 +351,7 @@ CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::RenderUpdate m_renderinfo.frameId:
       CheckNextBuffer(); //if we have a video pic image output render buffer ready, flip to it and set state to FLIP 
 CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::RenderUpdate POST NEXTBUFFER m_renderinfo.frameId: %i m_renderinfo.framepts: %f m_presentstep: %i", m_renderinfo.frameId, m_renderinfo.framepts, m_presentstep);
 
-// TODO: only flip overlays if the time is about right for the overlay to present: not sure if better to handle at output time, flip time , render time
-    m_overlays.FlipRender();
+//    m_overlays.FlipRender();
 
     if(m_presentstep == PRESENT_FLIP) //if we had moved to FLIP state then we must now flip the underyling renderer buffers to match
     {
@@ -361,6 +360,8 @@ CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::RenderUpdate POST NEXTBUFFER m_ren
       m_presentstep = PRESENT_FRAME;
       m_presentevent.Set();
     }
+// TODO: only flip overlays if the time is about right for the overlay to present: not sure yet if better to handle at output time or at render time
+    OverlayFlipRender();
   }
 
   CSharedLock lock(m_sharedSection);
@@ -417,6 +418,8 @@ unsigned int CXBMCRenderManager::PreInit()
   m_postrenderclock = DVD_NOPTS_VALUE;
   m_shortdisplaycount = 0;
   m_longdisplaycount = 0;
+  m_iOverlayAdd = 0;
+  m_iOverlayRender = 0;
 
   m_bIsStarted = false;
   m_bPauseDrawing = false;
@@ -690,23 +693,16 @@ CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::Present m_renderinfo.frameId: %i m
 
     if (m_presentstep == PRESENT_IDLE)
       CheckNextBuffer();
-CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::Present POST NEXTBUFFER m_renderinfo.frameId: %i m_renderinfo.framepts: %f m_presentstep: %i", m_renderinfo.frameId, m_renderinfo.framepts, m_presentstep);
 
     if(m_presentstep == PRESENT_FLIP)
     {
-      m_overlays.FlipRender();
-      //m_requestOverlayFlip = false;
       m_pRenderer->FlipPage(m_presentsource);
       m_presentstep = PRESENT_FRAME;
       m_presentevent.Set();
     }
-    // continue flipping overlays for still frames
-    //else if (m_requestOverlayFlip)
-    else
-    {
-      m_overlays.FlipRender();
-      //m_requestOverlayFlip = false;
-    }
+// TODO: only flip overlays if the time is about right for the overlay to present: not sure yet if better to handle at output time or at render time
+    int oIdx = OverlayFlipRender();
+CLog::Log(LOGDEBUG, "ASB: CXBMCRenderManager::Present POST FLIP m_renderinfo.frameId: %i m_renderinfo.framepts: %f oIdx: %i", m_renderinfo.frameId, m_renderinfo.framepts, oIdx);
   }
 
   CSharedLock lock(m_sharedSection);
@@ -1264,27 +1260,35 @@ void CXBMCRenderManager::ReleaseProcessor()
   m_pRenderer->ReleaseProcessor();
 }
 
-bool CXBMCRenderManager::WaitDrained(int timeout /* = 100 */)
+bool CXBMCRenderManager::WaitDrained(int timeout /* = 500 */)
 {
   // timeout is in ms
   if (!IsConfigured())
     return true;
 
-  double endtime = GetPresentTime() + ((double)timeout / 1000);
-  while(m_presentstep != PRESENT_IDLE || m_pRenderer->GetNextRenderBufferIndex() != -1)
+  CSharedLock lock(m_sharedSection);
+  m_pRenderer->SetDrain(); //tell implementation ok to drain
+  double starttime = GetPresentTime();
+  double endtime = starttime + ((double)timeout / 1000);
+  double currtime = starttime;
+  while(m_presentstep != PRESENT_IDLE || !m_pRenderer->Drained())
   {
-    if (timeout > 50)
-       g_application.NewFrame(); //just in case application was not told about the render frames
+    lock.Leave();
+    timeout = (int)((double)(endtime - currtime) * 1000) + 1;
+    timeout = std::min(timeout, 50);
     m_presentevent.WaitMSec(timeout);
-    double currtime = GetPresentTime();
+    currtime = GetPresentTime();
+    lock.Enter();
     if (currtime >= endtime)
     {
       break;
     }
-    timeout = (int)((double)(endtime - currtime) * 1000) + 1;
+    if (currtime - starttime > 0.1)
+      g_application.NewFrame(); //just in case application was not told about the render frames
   }
+  m_pRenderer->SetDrain(false);
   // return true (drained) if all buffers rendered and have reached idle step
-  return (m_presentstep == PRESENT_IDLE && m_pRenderer->GetNextRenderBufferIndex() == -1);
+  return (m_presentstep == PRESENT_IDLE && m_pRenderer->Drained());
 }
 
 bool CXBMCRenderManager::CheckResolutionChange(float fps)

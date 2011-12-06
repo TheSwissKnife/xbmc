@@ -139,14 +139,16 @@ CLinuxRendererGL::CLinuxRendererGL()
   m_renderQuality = RQ_SINGLEPASS;
   m_iFlags = 0;
 
+  m_NumRenderBuffers = NUM_BUFFERS;
   m_iLastRenderBuffer = -1;
   m_iFlipRequestRenderBuffer = -1;
-  m_iCurrentRenderBuffer = 0;
-  m_iOutputRenderBuffer = 0;
-  m_iDisplayedRenderBuffer = 0;
-  m_bAllRenderBuffersDisplayed = true;
+  m_iCurrentRenderBuffer = -1;
+  m_iOutputRenderBuffer = -1;
+  m_iDisplayedRenderBuffer = -1;
+  m_iFreeRenderBuffer = m_NumRenderBuffers - 1;
+  m_bAllRenderBuffersFree = true;
   m_bAllRenderBuffersOutput = false;
-  m_NumRenderBuffers = NUM_BUFFERS;
+  m_bDrain = false;
   m_flipindex = 0;
   m_currentField = FIELD_FULL;
   m_reloadShaders = 0;
@@ -259,11 +261,13 @@ bool CLinuxRendererGL::ValidateRenderTarget()
 
     m_iLastRenderBuffer = -1;
     m_iFlipRequestRenderBuffer = -1;
-    m_iCurrentRenderBuffer = 0;
-    m_iOutputRenderBuffer = 0;
-    m_iDisplayedRenderBuffer = 0;
-    m_bAllRenderBuffersDisplayed = true;
+    m_iCurrentRenderBuffer = -1;
+    m_iOutputRenderBuffer = -1;
+    m_iDisplayedRenderBuffer = -1;
+    m_iFreeRenderBuffer = m_NumRenderBuffers - 1;
+    m_bAllRenderBuffersFree = true;
     m_bAllRenderBuffersOutput = false;
+    m_bDrain = false;
 
     m_bValidated = true;
     return true;
@@ -317,9 +321,11 @@ bool CLinuxRendererGL::Configure(unsigned int width, unsigned int height, unsign
 
   m_iLastRenderBuffer = -1;
   m_iFlipRequestRenderBuffer = -1;
-  m_iCurrentRenderBuffer = 0;
-  m_iOutputRenderBuffer = 0;
-  m_iDisplayedRenderBuffer = 0;
+  m_iCurrentRenderBuffer = -1;
+  m_iOutputRenderBuffer = -1;
+  m_iDisplayedRenderBuffer = -1;
+  m_iFreeRenderBuffer = m_NumRenderBuffers - 1;
+  m_bDrain = false;
 
   m_nonLinStretch    = false;
   m_nonLinStretchGui = false;
@@ -793,28 +799,45 @@ void CLinuxRendererGL::NotifyDisplayFlip()
   if (!m_bValidated)
     return;
 
-  // Flip 'displayed' render buffer index to signify that this buffer can now be considered free to re-use
-  // we can assume that buffer prior to the current render buffer is safe to re-use.
-  // If we get notified a second time and render buffer has not moved then we can also assume the render buffer itself
-  // is now to safe to re-use.
+  // Flip 'displayed' render buffer index to signify that this buffer has been dispatched to display such that
+  // it would be 'safe' now to re-use.
+  // In general we can assume that buffer prior to the current render buffer is safe to re-use.
+  // Additionaly, if we get flip notified a second time for the same current render buffer then we can also assume 
+  // this render buffer itself is displayed, however we should not advertise re-use unless asked to drain (so that
+  // we can always re-render the last rendered for situations that require that eg to overwrite previous overlays).
   // See "Render Buffer State Description" in header for information.
-  int last = m_iDisplayedRenderBuffer;
-  if (m_iFlipRequestRenderBuffer == m_iCurrentRenderBuffer)
+  int last = m_iFreeRenderBuffer;
+  bool bDrain = m_bDrain; //TODO fix this later to be set as member var via render manager
+  //bool bDrain = false; //TODO fix this later to be set as member var via render manager
+
+  if (m_iFlipRequestRenderBuffer > -1 && m_iFlipRequestRenderBuffer == m_iCurrentRenderBuffer)
+  {
     m_iDisplayedRenderBuffer = m_iCurrentRenderBuffer;
-  else
+    if (bDrain)
+      m_iFreeRenderBuffer = m_iDisplayedRenderBuffer;
+  }
+  else if (m_iDisplayedRenderBuffer > -1 || m_iCurrentRenderBuffer > 0) //we have got started
+  {
     m_iDisplayedRenderBuffer = (m_iCurrentRenderBuffer + m_NumRenderBuffers - 1) % m_NumRenderBuffers;
+    m_iFreeRenderBuffer = m_iDisplayedRenderBuffer;
+  }
   m_iFlipRequestRenderBuffer = m_iCurrentRenderBuffer;
 
-  if (last != m_iDisplayedRenderBuffer)
+  CLog::Log(LOGDEBUG,"ASB CLinuxRendererGL::NotifyDisplayFlip m_bDrain: %i last: %i m_iFreeRenderBuffer: %i m_iDisplayedRenderBuffer: %i m_iFlipRequestRenderBuffer: %i m_iCurrentRenderBuffer: %i m_iOutputRenderBuffer: %i", (int)m_bDrain, last, m_iFreeRenderBuffer, m_iDisplayedRenderBuffer, m_iFlipRequestRenderBuffer, m_iCurrentRenderBuffer, m_iOutputRenderBuffer);
+  if (last != m_iFreeRenderBuffer && m_iFreeRenderBuffer > -1)
   {
-    if (m_iDisplayedRenderBuffer == m_iOutputRenderBuffer) // we have caught up with output so all buffers are re-usable
-      m_bAllRenderBuffersDisplayed = true;
+    // set implementation specific hardware buffers for re-use
+    //if (m_iDisplayedRenderBuffer != m_iCurrentRenderBuffer || bDrain)
+    //{
 #ifdef HAVE_LIBVDPAU
-  CVDPAU   *vdpau = m_buffers[m_iDisplayedRenderBuffer].vdpau;
-  if (vdpau)
-    if (!vdpau->DiscardPicture(m_iDisplayedRenderBuffer))
-      CLog::Log(LOGERROR,"CLinuxRendererGL::NotifyDisplayFlip failed to discard displayed render buffer picture: %i", m_iDisplayedRenderBuffer);
+      CVDPAU   *vdpau = m_buffers[m_iFreeRenderBuffer].vdpau;
+      if (vdpau)
+        if (!vdpau->DiscardPicture(m_iFreeRenderBuffer))
+          CLog::Log(LOGERROR,"CLinuxRendererGL::NotifyDisplayFlip failed to discard displayed render buffer picture: %i", m_iDisplayedRenderBuffer);
 #endif
+    //}
+    if (m_iFreeRenderBuffer == m_iOutputRenderBuffer) // we have caught up with output so all buffers have been displayed, so mark as all free 
+      m_bAllRenderBuffersFree = true;
   }
 }
 
@@ -823,13 +846,16 @@ bool CLinuxRendererGL::HasFreeBuffer()
   if (!m_bValidated)
     return false;
 
-  // we have a free buffer to prepare for render when we have not yet caught up with 
-  // the 'displayed' render buffer index (unless 'displayed' and 'current' have both caught up with 'output'
-  // where m_bAllRenderBuffersDisplayed will have been set)
-  // in which case all 3 values will be the same and thus all buffers are free
+  // we have a free buffer to prepare (output) for render when we have not yet caught up with 
+  // the 'displayed' render buffer index and are not just one behind the current render buffer 
+  // (unless all buffers are marked as free)
   // See "Render Buffer State Description" in header for information.
 
-  if (m_iOutputRenderBuffer == m_iDisplayedRenderBuffer && !m_bAllRenderBuffersDisplayed)
+CLog::Log(LOGDEBUG, "ASB: CLinuxRendererGL::HasFreeBuffer m_iOutputRenderBuffer: %i m_iDisplayedRenderBuffer: %i m_iCurrentRenderBuffer: %i m_iFreeRenderBuffer: %i m_bAllRenderBuffersFree: %i", m_iOutputRenderBuffer, m_iDisplayedRenderBuffer, m_iCurrentRenderBuffer, m_iFreeRenderBuffer, (int)m_bAllRenderBuffersFree);
+//  if ( (m_iOutputRenderBuffer == m_iDisplayedRenderBuffer || 
+ //       m_iOutputRenderBuffer == (m_iCurrentRenderBuffer + m_NumRenderBuffers - 1) % m_NumRenderBuffers) && 
+ //      !m_bAllRenderBuffersFree)
+  if (m_iOutputRenderBuffer == m_iFreeRenderBuffer && !m_bAllRenderBuffersFree)
     return false;
   else
     return true;
@@ -844,14 +870,14 @@ void CLinuxRendererGL::LogBuffers()
 
 int CLinuxRendererGL::FlipFreeBuffer()
 {
-  // return new free buffer index if successfully flipped, -1 otherwise
+  // return new free output buffer index if available, -1 otherwise
   if (!m_bValidated)
     return -1;
 
   // See "Render Buffer State Description" in header for information.
   if (HasFreeBuffer())
   {
-     m_bAllRenderBuffersDisplayed = false;
+     m_bAllRenderBuffersFree = false;
      m_iOutputRenderBuffer = (m_iOutputRenderBuffer + 1) % m_NumRenderBuffers;
      if (m_iOutputRenderBuffer == m_iCurrentRenderBuffer) //we have caught up with current render so all buffers are output only
        m_bAllRenderBuffersOutput = true;
@@ -905,14 +931,16 @@ unsigned int CLinuxRendererGL::PreInit()
   if ( m_resolution == RES_WINDOW )
     m_resolution = RES_DESKTOP;
 
+  m_NumRenderBuffers = NUM_BUFFERS;
   m_iLastRenderBuffer = -1;
   m_iFlipRequestRenderBuffer = -1;
-  m_iCurrentRenderBuffer = 0;
-  m_iOutputRenderBuffer = 0;
-  m_iDisplayedRenderBuffer = 0;
-  m_bAllRenderBuffersDisplayed = true;
+  m_iCurrentRenderBuffer = -1;
+  m_iOutputRenderBuffer = -1;
+  m_iDisplayedRenderBuffer = -1;
+  m_iFreeRenderBuffer = m_NumRenderBuffers - 1;
+  m_bAllRenderBuffersFree = true;
   m_bAllRenderBuffersOutput = false;
-  m_NumRenderBuffers = NUM_BUFFERS;
+  m_bDrain = false;
 
   // setup the background colour
   m_clearColour = (float)(g_advancedSettings.m_videoBlackBarColour & 0xff) / 0xff;

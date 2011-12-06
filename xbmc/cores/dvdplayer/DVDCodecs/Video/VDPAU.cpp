@@ -1668,7 +1668,7 @@ void CVDPAU::SpewHardwareAvailable()  //Copyright (c) 2008 Wladimir J. van der L
 
 int CVDPAU::FFGetBuffer(AVCodecContext *avctx, AVFrame *pic)
 {
-  CLog::Log(LOGNOTICE,"%s",__FUNCTION__);
+  //CLog::Log(LOGNOTICE,"%s",__FUNCTION__);
   CDVDVideoCodecFFmpeg* ctx        = (CDVDVideoCodecFFmpeg*)avctx->opaque;
   CVDPAU*               vdp        = (CVDPAU*)ctx->GetHardware();
   struct pictureAge*    pA         = &vdp->picAge;
@@ -1690,7 +1690,7 @@ int CVDPAU::FFGetBuffer(AVCodecContext *avctx, AVFrame *pic)
       {
         render = vdp->m_videoSurfaces[i];
         render->state = 0;
-CLog::Log(LOGDEBUG, "ASB: CVDPAU::FFGetBuffer unused video surface chosen render: %u", (unsigned int)render);
+//CLog::Log(LOGDEBUG, "ASB: CVDPAU::FFGetBuffer unused video surface chosen render: %u", (unsigned int)render);
         break;
       }
     }
@@ -1717,13 +1717,13 @@ CLog::Log(LOGDEBUG, "ASB: CVDPAU::FFGetBuffer unused video surface chosen render
     }
     CSingleLock lock(vdp->m_videoSurfaceSec);
     vdp->m_videoSurfaces.push_back(render);
-CLog::Log(LOGDEBUG, "ASB: CVDPAU::FFGetBuffer new video surface allocated render: %u", (unsigned int)render);
+//CLog::Log(LOGDEBUG, "ASB: CVDPAU::FFGetBuffer new video surface allocated render: %u", (unsigned int)render);
   }
 
   if (render == NULL)
     return -1;
 
-CLog::Log(LOGDEBUG, "ASB: CVDPAU::FFGetBuffer video surface render->surface: %u", (unsigned int)render->surface);
+//CLog::Log(LOGDEBUG, "ASB: CVDPAU::FFGetBuffer video surface render->surface: %u", (unsigned int)render->surface);
   pic->data[1] =  pic->data[2] = NULL;
   pic->data[0]= (uint8_t*)render;
 
@@ -1753,7 +1753,7 @@ CLog::Log(LOGDEBUG, "ASB: CVDPAU::FFGetBuffer video surface render->surface: %u"
 
 void CVDPAU::FFReleaseBuffer(AVCodecContext *avctx, AVFrame *pic)
 {
-  CLog::Log(LOGNOTICE,"%s",__FUNCTION__);
+  //CLog::Log(LOGNOTICE,"%s",__FUNCTION__);
   CDVDVideoCodecFFmpeg* ctx        = (CDVDVideoCodecFFmpeg*)avctx->opaque;
   CVDPAU*               vdp        = (CVDPAU*)ctx->GetHardware();
   vdpau_render_state * render;
@@ -1766,7 +1766,7 @@ void CVDPAU::FFReleaseBuffer(AVCodecContext *avctx, AVFrame *pic)
     return;
   }
 
-CLog::Log(LOGDEBUG, "ASB: CVDPAU::FFReleaseBuffer video surface render: %u render->surface: %u", (unsigned int)render, (unsigned int)render->surface);
+//CLog::Log(LOGDEBUG, "ASB: CVDPAU::FFReleaseBuffer video surface render: %u render->surface: %u", (unsigned int)render, (unsigned int)render->surface);
   CSingleLock lock(vdp->m_videoSurfaceSec);
   render->state &= ~FF_VDPAU_STATE_USED_FOR_REFERENCE;
   for(i=0; i<4; i++)
@@ -1814,7 +1814,8 @@ void CVDPAU::FFDrawSlice(struct AVCodecContext *s,
       return;
   }
 
-CLog::Log(LOGDEBUG, "ASB:  (VDPAU) FFDrawSlice Decoder render: %u render->surface: %u", (unsigned int)render, (unsigned int)render->surface);
+//CLog::Log(LOGDEBUG, "ASB: (VDPAU) FFDrawSlice Decoder render: %u render->surface: %u", (unsigned int)render, (unsigned int)render->surface);
+//TODO: debug sometimes I see a very long elapsed time for ffmpeg.Decode that is probably actually stuck in vdp_decoder_render (eg 500ms)
   vdp_st = vdp->vdp_decoder_render(vdp->decoder,
                                    render->surface,
                                    (VdpPictureInfo const *)&(render->info),
@@ -2069,7 +2070,7 @@ int CVDPAU::Decode(AVCodecContext *avctx, AVFrame *pFrame, bool bSoftDrain, bool
   int msgsFactor = m_bVdpauDeinterlacing ? 2 : 1; //how many usedPics can come out of 1 mixer input msg
   bool dropped = false;
   bool prevNotEmpty = true;
-//CLog::Log(LOGDEBUG,"ASB: CVDPAU::Decode bSoftDrain: %i targetUsed: %i m_usedOutPic.size(): %i m_presentOutPic.size(): %i m_mixerMessages.size(): %i", (int)bSoftDrain, targetUsed, m_usedOutPic.size(), m_presentOutPic.size(), m_mixerMessages.size());
+CLog::Log(LOGDEBUG,"ASB: CVDPAU::Decode bSoftDrain: %i targetUsed: %i m_usedOutPic.size(): %i m_presentOutPic.size(): %i m_mixerMessages.size(): %i", (int)bSoftDrain, targetUsed, m_usedOutPic.size(), m_presentOutPic.size(), m_mixerMessages.size());
   while (++iter < 2000)
   {
     { CSingleLock lock(m_outPicSec);
@@ -2130,6 +2131,7 @@ CLog::Log(LOGDEBUG, "ASB: CVDPAU::Decode: break loop with no-soft-drain and not 
 
       if (firstNotReportedPic) //we have not reported about this usedPic yet
       {
+CLog::Log(LOGDEBUG, "ASB: CVDPAU::Decode: firstNotReportedPic true");
         if (m_vdpauOutputMethod == OUTPUT_PIXMAP)
         {
           VdpPresentationQueueStatus status;
